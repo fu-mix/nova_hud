@@ -27,10 +27,22 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: transparent;
+    /* 完全透明だとクリックが背後に抜ける場合があるため、極わずかに着色して
+       確実にブラウザがクリックを受け取れるようにする */
+    background: rgba(2, 6, 10, 0.001);
     font-family: 'Rajdhani', sans-serif;
     color: var(--hud-cyan);
     cursor: crosshair;
+  }
+
+  /* 全画面のクリックキャッチ層（最背面）。HUD要素がない部分でもブラウザを
+     確実にアクティブにしておくため、わずかに着色した不可視レイヤーを敷く */
+  .click-catcher {
+    position: fixed;
+    inset: 0;
+    z-index: -10;
+    background: rgba(2, 6, 10, 0.001);
+    pointer-events: auto;
   }
 
   body {
@@ -1006,6 +1018,9 @@
     height: 55%;
     z-index: 40;
     cursor: crosshair;
+    /* 確実にクリックを拾うため、極薄に着色 */
+    background: rgba(0, 0, 0, 0.001);
+    pointer-events: auto;
   }
 
   .hold-ring {
@@ -1353,6 +1368,9 @@
 </style>
 </head>
 <body>
+
+<!-- 全画面のクリック受け皿（透明だが必ずブラウザにクリックを届ける） -->
+<div class="click-catcher"></div>
 
 <!-- 録音済み音声ファイル（スキャン完了アナウンス） -->
 <audio id="sndScanComplete" src="sounds/scan_complete.mp3" preload="auto"></audio>
