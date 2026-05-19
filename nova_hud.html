@@ -1,0 +1,2407 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N.O.V.A. — Heads-Up Display</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --hud-cyan: #4ddbff;
+    --hud-cyan-bright: #aef3ff;
+    --hud-cyan-dim: #1a6478;
+    --hud-gold: #ffb84d;
+    --hud-gold-bright: #ffd98a;
+    --hud-red: #ff3b3b;
+    --hud-bg: #02060a;
+    --hud-bg-2: #051018;
+    --hud-glow: 0 0 8px rgba(77, 219, 255, 0.6), 0 0 16px rgba(77, 219, 255, 0.3);
+    --hud-glow-gold: 0 0 8px rgba(255, 184, 77, 0.7), 0 0 18px rgba(255, 184, 77, 0.35);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+    font-family: 'Rajdhani', sans-serif;
+    color: var(--hud-cyan);
+    cursor: crosshair;
+  }
+
+  body {
+    perspective: 1400px;
+    perspective-origin: 50% 50%;
+  }
+
+  /* 3D scene container that holds parallax-tracked panels */
+  .scene-3d {
+    position: fixed;
+    inset: 0;
+    transform-style: preserve-3d;
+    transition: transform 0.15s ease-out;
+    will-change: transform;
+    pointer-events: none;
+  }
+  .scene-3d > * { pointer-events: auto; }
+
+  /* ===== TRANSPARENT BACKGROUND =====
+     body は透過 — HUD要素のみ画面に表示 */
+
+  /* Scanline overlay */
+  .scanlines {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(77, 219, 255, 0.03) 0px,
+      rgba(77, 219, 255, 0.03) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+    z-index: 100;
+    mix-blend-mode: screen;
+  }
+
+  /* Vignette and noise removed — they would darken the transparent background.
+     If you want them back, restore display:block instead of none. */
+  .vignette, .noise { display: none; }
+
+  /* Corner brackets — outer frame */
+  .frame-corner {
+    position: fixed;
+    width: 80px;
+    height: 80px;
+    border: 2px solid var(--hud-cyan);
+    z-index: 50;
+    box-shadow: var(--hud-glow);
+  }
+  .frame-corner.tl { top: 24px; left: 24px; border-right: none; border-bottom: none; }
+  .frame-corner.tr { top: 24px; right: 24px; border-left: none; border-bottom: none; }
+  .frame-corner.bl { bottom: 24px; left: 24px; border-right: none; border-top: none; }
+  .frame-corner.br { bottom: 24px; right: 24px; border-left: none; border-top: none; }
+
+  .frame-corner::after {
+    content: '';
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: var(--hud-cyan);
+    box-shadow: var(--hud-glow);
+  }
+  .frame-corner.tl::after { top: -5px; left: -5px; }
+  .frame-corner.tr::after { top: -5px; right: -5px; }
+  .frame-corner.bl::after { bottom: -5px; left: -5px; }
+  .frame-corner.br::after { bottom: -5px; right: -5px; }
+
+  /* ===== TOP STATUS BAR ===== */
+  .top-bar {
+    position: fixed;
+    top: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    padding: 8px 32px;
+    border: 1px solid var(--hud-cyan);
+    border-radius: 2px;
+    background: rgba(2, 6, 10, 0.6);
+    backdrop-filter: blur(4px);
+    box-shadow: var(--hud-glow);
+    z-index: 30;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .top-bar .brand {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    color: var(--hud-gold);
+    text-shadow: var(--hud-glow-gold);
+    font-size: 14px;
+    letter-spacing: 0.3em;
+  }
+
+  .top-bar .sep {
+    width: 1px;
+    height: 20px;
+    background: var(--hud-cyan-dim);
+  }
+
+  .pulse-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #00ff66;
+    box-shadow: 0 0 8px #00ff66;
+    margin-right: 8px;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+
+  /* ===== CENTER — ARC REACTOR / TIME ===== */
+  .center-stage {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 480px;
+    height: 480px;
+    z-index: 10;
+    pointer-events: none;
+    transform-style: preserve-3d;
+  }
+
+  .ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 1px solid var(--hud-cyan);
+    opacity: 0.5;
+  }
+
+  .ring.r1 {
+    transform-style: preserve-3d;
+    animation: orbit1 30s linear infinite;
+  }
+  .ring.r2 {
+    inset: 30px;
+    border-style: dashed;
+    border-color: var(--hud-gold);
+    opacity: 0.4;
+    transform-style: preserve-3d;
+    animation: orbit2 22s linear infinite;
+  }
+  .ring.r3 {
+    inset: 60px;
+    border: 2px solid var(--hud-cyan);
+    opacity: 0.3;
+    transform-style: preserve-3d;
+    animation: orbit3 45s linear infinite;
+  }
+  .ring.r4 {
+    inset: 90px;
+    border: 1px solid var(--hud-cyan-dim);
+    transform-style: preserve-3d;
+    animation: orbit4 18s linear infinite;
+  }
+
+  /* 3D orbiting rings — each tilted on a different axis */
+  @keyframes orbit1 {
+    from { transform: rotateX(70deg) rotateZ(0deg); }
+    to   { transform: rotateX(70deg) rotateZ(360deg); }
+  }
+  @keyframes orbit2 {
+    from { transform: rotateY(60deg) rotateZ(0deg); }
+    to   { transform: rotateY(60deg) rotateZ(-360deg); }
+  }
+  @keyframes orbit3 {
+    from { transform: rotateX(-65deg) rotateY(20deg) rotateZ(0deg); }
+    to   { transform: rotateX(-65deg) rotateY(20deg) rotateZ(360deg); }
+  }
+  @keyframes orbit4 {
+    from { transform: rotateY(-55deg) rotateZ(0deg); }
+    to   { transform: rotateY(-55deg) rotateZ(-360deg); }
+  }
+
+  /* tick marks on outer ring */
+  .tick-ring {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    animation: orbitTicks 60s linear infinite;
+  }
+  @keyframes orbitTicks {
+    from { transform: rotateX(72deg) rotateZ(0deg); }
+    to   { transform: rotateX(72deg) rotateZ(360deg); }
+  }
+  .tick {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    width: 2px;
+    height: 12px;
+    background: var(--hud-cyan);
+    transform-origin: 50% 240px;
+    box-shadow: 0 0 4px var(--hud-cyan);
+  }
+
+  .center-info {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+  }
+
+  .center-reticle {
+    opacity: 0.75;
+    animation: reticlePulse 3s ease-in-out infinite;
+  }
+
+  @keyframes reticlePulse {
+    0%, 100% { opacity: 0.75; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.05); }
+  }
+
+  .center-label {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    color: var(--hud-gold);
+    letter-spacing: 0.5em;
+    text-shadow: var(--hud-glow-gold);
+  }
+
+  /* ===== PANELS ===== */
+  .panel {
+    position: fixed;
+    background: linear-gradient(135deg, rgba(2, 6, 10, 0.85) 0%, rgba(5, 16, 24, 0.85) 100%);
+    border: 1px solid var(--hud-cyan);
+    box-shadow:
+      0 0 0 1px rgba(77, 219, 255, 0.1),
+      0 0 20px rgba(77, 219, 255, 0.2),
+      inset 0 0 20px rgba(77, 219, 255, 0.05);
+    backdrop-filter: blur(8px);
+    z-index: 20;
+    overflow: hidden;
+    transform-style: preserve-3d;
+    will-change: transform;
+  }
+
+  /* 3D panel orientations — visor curvature feel.
+     Left panels face inward (rotated on Y to the right).
+     Right panels face inward (rotated on Y to the left).
+     Top/bottom bars tilt forward/back on X. */
+  .panel-weather {
+    transform-origin: right center;
+    transform:
+      perspective(1200px)
+      rotateY(22deg)
+      rotateX(-4deg)
+      translateZ(-40px);
+  }
+
+  .panel-bio {
+    transform-origin: right center;
+    transform:
+      perspective(1200px)
+      rotateY(22deg)
+      rotateX(4deg)
+      translateZ(-40px);
+  }
+
+  .panel-map {
+    transform-origin: left center;
+    transform:
+      perspective(1200px)
+      rotateY(-22deg)
+      rotateX(-4deg)
+      translateZ(-40px);
+  }
+
+  .panel-recs {
+    transform-origin: left center;
+    transform:
+      perspective(1200px)
+      rotateY(-22deg)
+      rotateX(4deg)
+      translateZ(-40px);
+  }
+  /* 枠は常時表示。中身（rec-item）だけスキャン後に表示 */
+  .panel-recs .rec-item {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.4s, transform 0.4s;
+  }
+  .panel-recs.revealed .rec-item {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .panel-recs.revealed .rec-item:nth-child(1) { transition-delay: 0.15s; }
+  .panel-recs.revealed .rec-item:nth-child(2) { transition-delay: 0.30s; }
+  .panel-recs.revealed .rec-item:nth-child(3) { transition-delay: 0.45s; }
+  .panel-recs.revealed .rec-item:nth-child(4) { transition-delay: 0.60s; }
+  .panel-recs.revealed .rec-item:nth-child(5) { transition-delay: 0.75s; }
+  /* スキャン前のプレースホルダー */
+  .recs-placeholder {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--hud-cyan-dim);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    line-height: 1.8;
+    transition: opacity 0.4s;
+  }
+  .panel-recs.revealed .recs-placeholder { opacity: 0; display: none; }
+  .recs-placeholder .blink { animation: blinkSlow 1.5s ease-in-out infinite; }
+  @keyframes blinkSlow {
+    0%, 100% { opacity: 0.3; }
+    50%      { opacity: 1; }
+  }
+
+  .top-bar {
+    transform-origin: center top !important;
+    transform:
+      translateX(-50%)
+      perspective(1200px)
+      rotateX(-18deg)
+      translateZ(-30px) !important;
+  }
+
+  .bottom-bar {
+    transform-origin: center bottom !important;
+    transform:
+      translateX(-50%)
+      perspective(1200px)
+      rotateX(18deg)
+      translateZ(-30px) !important;
+  }
+
+  /* Add shading on the angled side for depth illusion */
+  .panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .panel-weather::before, .panel-bio::before {
+    background: linear-gradient(90deg, rgba(0,0,0,0) 40%, rgba(0,0,0,0.45) 100%);
+  }
+  .panel-map::before, .panel-recs::before {
+    background: linear-gradient(270deg, rgba(0,0,0,0) 40%, rgba(0,0,0,0.45) 100%);
+  }
+
+  /* Edge highlight on the near side */
+  .panel::after {
+    content: '';
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 1px;
+    background: var(--hud-cyan);
+    box-shadow: 0 0 12px var(--hud-cyan);
+    opacity: 0.8;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .panel-weather::after, .panel-bio::after { left: 0; }
+  .panel-map::after, .panel-recs::after { right: 0; }
+
+  /* angled corners via clip-path */
+  .panel.angled {
+    clip-path: polygon(
+      14px 0,
+      calc(100% - 14px) 0,
+      100% 14px,
+      100% calc(100% - 14px),
+      calc(100% - 14px) 100%,
+      14px 100%,
+      0 calc(100% - 14px),
+      0 14px
+    );
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px 8px;
+    border-bottom: 1px solid rgba(77, 219, 255, 0.3);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.25em;
+    color: var(--hud-gold);
+    text-shadow: var(--hud-glow-gold);
+    text-transform: uppercase;
+  }
+
+  .panel-id {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.1em;
+  }
+
+  .panel-body {
+    padding: 14px 16px;
+  }
+
+  /* ===== WEATHER (TOP LEFT) ===== */
+  .panel-weather {
+    top: 130px;
+    left: 50px;
+    width: 320px;
+  }
+
+  .weather-main {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .weather-icon {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+  }
+
+  .weather-temp {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 42px;
+    color: var(--hud-cyan-bright);
+    line-height: 1;
+    text-shadow: 0 0 8px rgba(77, 219, 255, 0.6);
+  }
+
+  .weather-temp .unit {
+    font-size: 18px;
+    color: var(--hud-gold);
+    margin-left: 2px;
+  }
+
+  .weather-condition {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--hud-cyan);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  .weather-loc {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.1em;
+  }
+
+  .weather-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(77, 219, 255, 0.2);
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+
+  .stat-value {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 16px;
+    color: var(--hud-gold-bright);
+    text-shadow: var(--hud-glow-gold);
+  }
+
+  .stat-unit {
+    font-size: 10px;
+    color: var(--hud-cyan);
+    margin-left: 1px;
+  }
+
+  /* Forecast strip */
+  .forecast {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(77, 219, 255, 0.2);
+  }
+
+  .forecast-item {
+    text-align: center;
+    flex: 1;
+  }
+
+  .forecast-day {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.1em;
+  }
+
+  .forecast-temp {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--hud-cyan-bright);
+    margin-top: 2px;
+  }
+
+  .forecast-icon {
+    font-size: 16px;
+    margin: 2px 0;
+  }
+
+  /* ===== BIOMETRICS (BOTTOM LEFT) ===== */
+  .panel-bio {
+    bottom: 60px;
+    left: 50px;
+    width: 320px;
+  }
+
+  .bio-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .bio-row:last-child { margin-bottom: 0; }
+
+  .bio-label {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 500;
+    font-size: 11px;
+    color: var(--hud-cyan);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    width: 70px;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 6px;
+    background: rgba(77, 219, 255, 0.1);
+    border: 1px solid rgba(77, 219, 255, 0.3);
+    margin: 0 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--hud-cyan), var(--hud-cyan-bright));
+    box-shadow: 0 0 8px var(--hud-cyan);
+    position: relative;
+    animation: barPulse 3s ease-in-out infinite;
+  }
+
+  .bar-fill::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    animation: barShine 2s linear infinite;
+  }
+
+  @keyframes barPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.85; }
+  }
+
+  @keyframes barShine {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  .bio-value {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--hud-gold-bright);
+    text-shadow: var(--hud-glow-gold);
+    width: 50px;
+    text-align: right;
+  }
+
+  /* heartbeat ECG */
+  .ecg-box {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed rgba(77, 219, 255, 0.2);
+  }
+
+  .ecg-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .ecg-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .ecg-bpm {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    color: #ff3b6b;
+    text-shadow: 0 0 8px rgba(255, 59, 107, 0.7);
+  }
+
+  .ecg-bpm .label {
+    font-size: 9px;
+    color: var(--hud-cyan-dim);
+    margin-left: 4px;
+    letter-spacing: 0.15em;
+  }
+
+  .ecg-svg {
+    width: 100%;
+    height: 50px;
+    background: rgba(77, 219, 255, 0.03);
+    border: 1px solid rgba(77, 219, 255, 0.15);
+  }
+
+  .ecg-line {
+    fill: none;
+    stroke: #ff3b6b;
+    stroke-width: 1.5;
+    filter: drop-shadow(0 0 3px rgba(255, 59, 107, 0.8));
+  }
+
+  /* ===== MAP (TOP RIGHT) ===== */
+  .panel-map {
+    top: 130px;
+    right: 50px;
+    width: 320px;
+    height: 280px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .map-canvas {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(ellipse at center, rgba(77, 219, 255, 0.08) 0%, transparent 70%);
+  }
+
+  .map-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .map-line {
+    stroke: var(--hud-cyan);
+    stroke-width: 0.8;
+    fill: none;
+    opacity: 0.7;
+  }
+  .map-road {
+    stroke: var(--hud-cyan);
+    stroke-width: 1.5;
+    fill: none;
+    opacity: 0.85;
+  }
+  .map-highway {
+    stroke: var(--hud-gold);
+    stroke-width: 2;
+    fill: none;
+    opacity: 0.9;
+    filter: drop-shadow(0 0 2px var(--hud-gold));
+  }
+  .map-block {
+    fill: rgba(77, 219, 255, 0.06);
+    stroke: rgba(77, 219, 255, 0.3);
+    stroke-width: 0.5;
+  }
+
+  .map-marker {
+    fill: var(--hud-gold);
+    filter: drop-shadow(0 0 4px var(--hud-gold));
+  }
+
+  .user-pos {
+    fill: #00ff66;
+    filter: drop-shadow(0 0 6px #00ff66);
+  }
+
+  .user-pos-ring {
+    fill: none;
+    stroke: #00ff66;
+    stroke-width: 1;
+    transform-origin: center;
+  }
+
+  @keyframes radarPulse {
+    0% { r: 5; opacity: 0.9; }
+    100% { r: 40; opacity: 0; }
+  }
+
+  /* radar sweep */
+  .radar-sweep {
+    fill: url(#sweepGrad);
+    transform-origin: center;
+    animation: rotate 4s linear infinite;
+  }
+
+  /* ===== RECOMMENDATIONS (BOTTOM RIGHT) ===== */
+  .panel-recs {
+    bottom: 60px;
+    right: 50px;
+    width: 320px;
+  }
+
+  .rec-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+    border-bottom: 1px dashed rgba(77, 219, 255, 0.15);
+    transition: background 0.2s;
+  }
+
+  .rec-item:last-child { border-bottom: none; }
+
+  .rec-item:hover {
+    background: rgba(77, 219, 255, 0.05);
+  }
+
+  .rec-icon {
+    width: 32px;
+    height: 32px;
+    border: 1px solid var(--hud-cyan);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 0 8px rgba(77, 219, 255, 0.3);
+    background: rgba(77, 219, 255, 0.05);
+  }
+
+  .rec-icon svg { width: 18px; height: 18px; }
+
+  .rec-content { flex: 1; min-width: 0; }
+
+  .rec-title {
+    font-family: 'Rajdhani', sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--hud-cyan-bright);
+    letter-spacing: 0.05em;
+    line-height: 1.2;
+  }
+
+  .rec-meta {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.1em;
+    margin-top: 2px;
+  }
+
+  .rec-priority {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 700;
+    font-size: 10px;
+    padding: 2px 6px;
+    border: 1px solid var(--hud-gold);
+    color: var(--hud-gold);
+    letter-spacing: 0.15em;
+  }
+
+  .rec-priority.high {
+    color: var(--hud-red);
+    border-color: var(--hud-red);
+  }
+
+  /* ===== SIDE TICKERS ===== */
+  .left-ticker {
+    position: fixed;
+    top: 50%;
+    left: 24px;
+    transform: translateY(-50%);
+    writing-mode: vertical-rl;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.3em;
+    z-index: 30;
+  }
+  .right-ticker {
+    position: fixed;
+    top: 50%;
+    right: 24px;
+    transform: translateY(-50%);
+    writing-mode: vertical-rl;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-cyan-dim);
+    letter-spacing: 0.3em;
+    z-index: 30;
+  }
+
+  /* ===== BOTTOM TELEMETRY ===== */
+  .bottom-bar {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 24px;
+    padding: 6px 24px;
+    background: rgba(2, 6, 10, 0.7);
+    border: 1px solid var(--hud-cyan);
+    backdrop-filter: blur(4px);
+    box-shadow: var(--hud-glow);
+    z-index: 30;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: var(--hud-cyan);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  .telem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .telem-label { color: var(--hud-cyan-dim); }
+  .telem-val { color: var(--hud-gold-bright); font-weight: bold; }
+
+  /* targeting reticles in corners of map */
+  .reticle {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--hud-gold);
+    opacity: 0.5;
+  }
+  .reticle.tl { top: 4px; left: 4px; border-right: 0; border-bottom: 0; }
+  .reticle.tr { top: 4px; right: 4px; border-left: 0; border-bottom: 0; }
+  .reticle.bl { bottom: 4px; left: 4px; border-right: 0; border-top: 0; }
+  .reticle.br { bottom: 4px; right: 4px; border-left: 0; border-top: 0; }
+
+  /* Panels: translucent so the background shows through */
+  .panel {
+    background: linear-gradient(135deg, rgba(2, 6, 10, 0.5) 0%, rgba(5, 16, 24, 0.5) 100%) !important;
+  }
+  .top-bar,
+  .bottom-bar {
+    background: rgba(2, 6, 10, 0.4) !important;
+  }
+
+  /* Boot intro — uses opacity/filter only so per-panel 3D transforms survive */
+  @keyframes bootIn {
+    0% { opacity: 0; filter: blur(8px) brightness(2); }
+    100% { opacity: 1; filter: blur(0) brightness(1); }
+  }
+
+  .panel, .top-bar, .bottom-bar, .center-stage, .frame-corner {
+    animation: bootIn 0.9s ease-out backwards;
+  }
+
+  .top-bar { animation-delay: 0.1s; }
+  .frame-corner { animation-delay: 0.15s; }
+  .center-stage { animation-delay: 0.2s; }
+  .panel-weather { animation-delay: 0.4s; }
+  .panel-bio { animation-delay: 0.5s; }
+  .panel-map { animation-delay: 0.6s; }
+  .panel-recs { animation-delay: 0.7s; }
+  .bottom-bar { animation-delay: 0.8s; }
+
+  /* glitch on title */
+  @keyframes glitch {
+    0%, 100% { text-shadow: var(--hud-glow-gold); }
+    92% { text-shadow: 2px 0 var(--hud-cyan), -2px 0 var(--hud-red); }
+    94% { text-shadow: var(--hud-glow-gold); }
+    96% { text-shadow: -1px 0 var(--hud-cyan), 1px 0 var(--hud-red); }
+  }
+  .top-bar .brand { animation: glitch 6s infinite; }
+
+  /* targeting crosshair that follows mouse */
+  .crosshair {
+    position: fixed;
+    width: 60px;
+    height: 60px;
+    pointer-events: none;
+    z-index: 200;
+    mix-blend-mode: screen;
+    transform: translate(-50%, -50%);
+    opacity: 0.7;
+    transition: opacity 0.3s;
+  }
+
+  .crosshair::before, .crosshair::after {
+    content: '';
+    position: absolute;
+    background: var(--hud-gold);
+    box-shadow: 0 0 6px var(--hud-gold);
+  }
+  .crosshair::before {
+    top: 50%; left: 0; right: 0; height: 1px;
+    transform: translateY(-50%);
+  }
+  .crosshair::after {
+    left: 50%; top: 0; bottom: 0; width: 1px;
+    transform: translateX(-50%);
+  }
+  .crosshair-ring {
+    position: absolute;
+    inset: 18px;
+    border: 1px solid var(--hud-gold);
+    border-radius: 50%;
+    box-shadow: 0 0 6px var(--hud-gold), inset 0 0 6px var(--hud-gold);
+  }
+
+  /* =====================================================
+     WEATHER SCAN DEMO — 案2
+     ===================================================== */
+
+  .scan-hint {
+    position: fixed;
+    top: 38%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: rgba(77,219,255,0.5);
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 35;
+    opacity: 0;
+    animation: hintFade 5s ease-in-out 2.5s forwards;
+  }
+  @keyframes hintFade {
+    0%   { opacity: 0; }
+    20%  { opacity: 0.8; }
+    80%  { opacity: 0.8; }
+    100% { opacity: 0; }
+  }
+
+  .sky-zone {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 55%;
+    z-index: 40;
+    cursor: crosshair;
+  }
+
+  .hold-ring {
+    position: fixed;
+    width: 72px; height: 72px;
+    pointer-events: none;
+    z-index: 201;
+    transform: translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .hold-ring svg { width: 100%; height: 100%; overflow: visible; }
+  .hold-ring .hr-track { fill: none; stroke: rgba(77,219,255,0.2); stroke-width: 2; }
+  .hold-ring .hr-fill  { fill: none; stroke: var(--hud-gold); stroke-width: 2.5;
+    stroke-linecap: round; stroke-dasharray: 188.5; stroke-dashoffset: 188.5;
+    transform: rotate(-90deg); transform-origin: 50% 50%;
+    filter: drop-shadow(0 0 4px var(--hud-gold)); }
+  .hold-ring .hr-label {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Orbitron', sans-serif; font-size: 8px;
+    color: var(--hud-gold); letter-spacing: 0.05em;
+  }
+
+  .radar-overlay {
+    position: fixed; inset: 0; z-index: 300;
+    pointer-events: none; opacity: 0;
+    transition: opacity 0.4s ease;
+    background: rgba(2,6,10,0.25);
+    overflow: hidden;
+  }
+  .radar-overlay.active { opacity: 1; pointer-events: auto; }
+
+  /* Vertical scan line that sweeps left → right */
+  .scan-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background: var(--hud-cyan-bright);
+    box-shadow:
+      0 0 12px var(--hud-cyan-bright),
+      0 0 24px var(--hud-cyan),
+      0 0 60px var(--hud-cyan);
+    transform: translateX(-10px);
+    z-index: 4;
+    will-change: transform;
+  }
+  /* Cyan glow trail behind the scan line */
+  .scan-trail {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 240px;
+    background: linear-gradient(
+      90deg,
+      rgba(77,219,255,0) 0%,
+      rgba(77,219,255,0.06) 40%,
+      rgba(77,219,255,0.18) 85%,
+      rgba(174,243,255,0.32) 99%,
+      rgba(174,243,255,0.45) 100%
+    );
+    transform: translateX(-260px);
+    z-index: 3;
+    will-change: transform;
+    mix-blend-mode: screen;
+  }
+  /* Subtle horizontal scanlines that intensify during scan */
+  .scan-grid {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background-image:
+      linear-gradient(0deg, rgba(77,219,255,0.08) 1px, transparent 1px);
+    background-size: 100% 4px;
+    opacity: 0.6;
+  }
+  /* Vertical guide rails — top and bottom of scan area */
+  .scan-rails::before,
+  .scan-rails::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    height: 1px;
+    background: rgba(77,219,255,0.4);
+    box-shadow: 0 0 6px rgba(77,219,255,0.5);
+  }
+  .scan-rails::before { top: 12%; }
+  .scan-rails::after  { bottom: 12%; }
+
+  /* Tick markers along the rails */
+  .scan-rails {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* Coordinate readout that moves with the scan line */
+  .scan-readout {
+    position: absolute;
+    top: 12%;
+    transform: translateX(-50%);
+    padding: 4px 10px;
+    background: rgba(2,6,10,0.9);
+    border: 1px solid var(--hud-cyan);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--hud-cyan-bright);
+    letter-spacing: 0.15em;
+    z-index: 5;
+    white-space: nowrap;
+    box-shadow: 0 0 8px rgba(77,219,255,0.4);
+    opacity: 0;
+  }
+  .scan-readout.show { opacity: 1; }
+  .scan-readout::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    width: 1px;
+    height: 12%;
+    background: linear-gradient(180deg, var(--hud-cyan), transparent);
+    transform: translateX(-50%);
+  }
+
+  .radar-status {
+    position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    font-family: 'Orbitron', sans-serif; font-weight: 700;
+    font-size: 13px; letter-spacing: 0.3em;
+    color: var(--hud-cyan-bright); text-shadow: var(--hud-glow);
+    text-align: center; line-height: 2; white-space: nowrap;
+    z-index: 6;
+  }
+  .radar-status .sub {
+    display: block; font-size: 10px; color: var(--hud-gold);
+    text-shadow: var(--hud-glow-gold); letter-spacing: 0.4em;
+  }
+
+  .radar-progress-wrap {
+    position: absolute; bottom: 70px; left: 50%; transform: translateX(-50%);
+    width: 360px; text-align: center; z-index: 6;
+  }
+  .radar-progress-label {
+    font-family: 'Share Tech Mono', monospace; font-size: 10px;
+    color: var(--hud-cyan-dim); letter-spacing: 0.25em; margin-bottom: 6px;
+  }
+  .radar-progress-track {
+    height: 4px; background: rgba(77,219,255,0.1);
+    border: 1px solid rgba(77,219,255,0.3); overflow: hidden;
+  }
+  .radar-progress-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--hud-cyan), var(--hud-cyan-bright));
+    box-shadow: 0 0 8px var(--hud-cyan); transition: width 0.08s linear;
+  }
+  .radar-progress-pct {
+    font-family: 'Orbitron', monospace; font-size: 11px;
+    color: var(--hud-gold-bright); margin-top: 6px;
+  }
+
+  /* Detected cloud "boxes" that flash on as the scan line passes */
+  .cloud-box {
+    position: absolute;
+    border: 1px solid var(--hud-cyan);
+    background: rgba(77,219,255,0.04);
+    box-shadow: 0 0 10px rgba(77,219,255,0.4), inset 0 0 10px rgba(77,219,255,0.1);
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 0.4s;
+  }
+  .cloud-box.detected { opacity: 1; animation: boxFlash 0.6s ease-out; }
+  .cloud-box.danger { border-color: var(--hud-red); background: rgba(255,59,59,0.08); box-shadow: 0 0 10px rgba(255,59,59,0.4); }
+
+  @keyframes boxFlash {
+    0%   { opacity: 0; transform: scale(1.1); }
+    30%  { opacity: 1; transform: scale(1); background: rgba(77,219,255,0.25); }
+    100% { opacity: 1; transform: scale(1); }
+  }
+
+  /* Corner brackets on cloud boxes */
+  .cloud-box::before, .cloud-box::after {
+    content: '';
+    position: absolute;
+    width: 8px; height: 8px;
+    border: 2px solid var(--hud-gold);
+  }
+  .cloud-box.danger::before, .cloud-box.danger::after { border-color: var(--hud-red); }
+  .cloud-box::before { top: -2px; left: -2px; border-right: 0; border-bottom: 0; }
+  .cloud-box::after  { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+
+  /* Label attached to a detected box */
+  .cloud-box-label {
+    position: absolute;
+    top: -22px;
+    left: 0;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--hud-cyan-bright);
+    background: rgba(2,6,10,0.9);
+    padding: 2px 8px;
+    border-left: 2px solid var(--hud-gold);
+    white-space: nowrap;
+    letter-spacing: 0.1em;
+  }
+  .cloud-box.danger .cloud-box-label { color: #ff8080; border-left-color: var(--hud-red); }
+
+  /* Results panel slides up from bottom */
+  .weather-result-panel {
+    position: fixed; bottom: -100%; left: 50%; transform: translateX(-50%);
+    width: min(680px, 90vw); z-index: 310;
+    background: linear-gradient(135deg, rgba(2,6,10,0.97), rgba(5,16,24,0.97));
+    border: 1px solid var(--hud-cyan);
+    box-shadow: 0 0 40px rgba(77,219,255,0.25), inset 0 0 40px rgba(77,219,255,0.03);
+    backdrop-filter: blur(16px);
+    transition: bottom 0.65s cubic-bezier(0.16,1,0.3,1);
+    clip-path: polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%,0 14px);
+  }
+  .weather-result-panel.open { bottom: 48px; }
+
+  .wrp-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 18px 8px; border-bottom: 1px solid rgba(77,219,255,0.2);
+  }
+  .wrp-title {
+    font-family: 'Orbitron', sans-serif; font-weight: 700;
+    font-size: 11px; letter-spacing: 0.25em;
+    color: var(--hud-gold); text-shadow: var(--hud-glow-gold);
+  }
+  .wrp-close {
+    font-family: 'Orbitron', sans-serif; font-size: 10px;
+    color: var(--hud-cyan-dim); cursor: pointer; letter-spacing: 0.2em;
+    padding: 3px 8px; border: 1px solid rgba(77,219,255,0.3); transition: all 0.2s;
+  }
+  .wrp-close:hover { color: var(--hud-red); border-color: var(--hud-red); }
+
+  .wrp-body { display: grid; grid-template-columns: 1fr 1fr; }
+
+  .wrp-analysis {
+    padding: 12px 18px; border-right: 1px solid rgba(77,219,255,0.12);
+  }
+  .wrp-section-title {
+    font-family: 'Share Tech Mono', monospace; font-size: 8px;
+    color: var(--hud-cyan-dim); letter-spacing: 0.3em;
+    text-transform: uppercase; margin-bottom: 8px;
+  }
+  .cloud-result-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 3px 0; border-bottom: 1px dashed rgba(77,219,255,0.1);
+    font-family: 'Rajdhani', sans-serif; font-size: 11px;
+  }
+  .crk { color: var(--hud-cyan); letter-spacing: 0.05em; }
+  .crv { color: var(--hud-gold-bright); font-weight: 600; font-size: 11px; }
+  .crv.danger { color: #ff6060; }
+  .crv.ok { color: #00ff88; }
+
+  .wrp-timeline { padding: 12px 18px; }
+  .timeline-strip {
+    display: flex; gap: 2px; align-items: flex-end; height: 48px; margin-bottom: 4px;
+  }
+  .tl-slot { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+  .tl-bar-wrap { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+  .tl-bar { width: 65%; border-radius: 1px 1px 0 0; min-height: 3px; position: relative; overflow: hidden; }
+  .tl-bar::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg,rgba(255,255,255,0.18),transparent); }
+  .tl-icon { font-size: 9px; line-height: 1; }
+  .tl-time { font-family: 'Share Tech Mono', monospace; font-size: 6px; color: var(--hud-cyan-dim); }
+  .tl-temp { font-family: 'Orbitron', sans-serif; font-size: 7px; color: var(--hud-cyan-bright); }
+
+  .rain-band { height: 3px; background: rgba(77,219,255,0.08); border: 1px solid rgba(77,219,255,0.2); margin: 3px 0 4px; position: relative; }
+  .rain-band-label { font-family: 'Share Tech Mono', monospace; font-size: 6px; color: var(--hud-cyan-dim); letter-spacing: 0.15em; margin-bottom: 2px; }
+  .rain-segment { position: absolute; top: 0; bottom: 0; background: var(--hud-red); box-shadow: 0 0 6px var(--hud-red); opacity: 0.75; }
+
+  .wrp-actions {
+    grid-column: 1 / -1; padding: 10px 18px 12px;
+    border-top: 1px solid rgba(77,219,255,0.15);
+    display: flex; gap: 8px;
+  }
+  .action-card {
+    flex: 1; padding: 8px 10px;
+    border: 1px solid rgba(77,219,255,0.35);
+    background: rgba(77,219,255,0.03);
+    display: flex; align-items: center; gap: 8px;
+    clip-path: polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);
+    opacity: 0; transform: translateY(14px);
+    transition: opacity 0.4s, transform 0.4s;
+  }
+  .action-card.show { opacity: 1; transform: translateY(0); }
+  .action-card:hover { background: rgba(77,219,255,0.09); border-color: var(--hud-cyan); }
+  .action-card.warn { border-color: rgba(255,80,80,0.5); background: rgba(255,60,60,0.04); }
+  .action-card.warn:hover { background: rgba(255,60,60,0.1); }
+  .ac-icon { font-size: 18px; flex-shrink: 0; }
+  .ac-label { font-family: 'Share Tech Mono', monospace; font-size: 7px; color: var(--hud-cyan-dim); letter-spacing: 0.15em; margin-bottom: 2px; }
+  .ac-text { font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 11px; color: var(--hud-cyan-bright); line-height: 1.25; }
+  .action-card.warn .ac-text { color: #ff8080; }
+
+  /* Audio toggle button in top bar */
+  .audio-toggle {
+    background: transparent;
+    border: 1px solid rgba(77,219,255,0.4);
+    color: var(--hud-cyan-bright);
+    cursor: pointer;
+    padding: 3px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    transition: all 0.2s;
+  }
+  .audio-toggle:hover {
+    border-color: var(--hud-cyan);
+    background: rgba(77,219,255,0.08);
+    color: var(--hud-cyan-bright);
+    text-shadow: var(--hud-glow);
+  }
+  .audio-toggle.muted {
+    color: var(--hud-cyan-dim);
+    border-color: rgba(77,219,255,0.15);
+  }
+  .audio-toggle.muted:hover {
+    color: var(--hud-cyan);
+    border-color: rgba(77,219,255,0.4);
+  }
+
+  /* ===================================================== */
+
+  /* Responsive: shrink for smaller windows */
+  @media (max-width: 1100px) {
+    .panel-weather, .panel-bio { left: 24px; width: 280px; }
+    .panel-map, .panel-recs { right: 24px; width: 280px; }
+    .center-stage { width: 360px; height: 360px; }
+  }
+
+  @media (max-height: 760px) {
+    .panel-weather, .panel-map { top: 110px; }
+    .panel-bio, .panel-recs { bottom: 50px; }
+    .center-stage { width: 380px; height: 380px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 録音済み音声ファイル（スキャン完了アナウンス） -->
+<audio id="sndScanComplete" src="sounds/scan_complete.mp3" preload="auto"></audio>
+
+<!-- frame corners -->
+<div class="frame-corner tl"></div>
+<div class="frame-corner tr"></div>
+<div class="frame-corner bl"></div>
+<div class="frame-corner br"></div>
+
+<!-- side tickers -->
+<div class="left-ticker">SYS-INT // HELIOS DYNAMICS // N.O.V.A MK-VII // OPERATIONAL</div>
+<div class="right-ticker">PROTOCOL ACTIVE // POWER 100% // NEURAL LINK STABLE // ECHO STANDBY</div>
+
+<!-- 3D scene wrapper for parallax/head-tracking effect -->
+<div class="scene-3d" id="scene3d">
+
+<!-- TOP BAR -->
+<div class="top-bar">
+  <div class="brand">N.O.V.A</div>
+  <div class="sep"></div>
+  <div><span class="pulse-dot"></span>SYSTEM ONLINE</div>
+  <div class="sep"></div>
+  <div>USR / <span style="color: var(--hud-gold-bright)">OPERATOR</span></div>
+  <div class="sep"></div>
+  <div id="topClock">--:--:--</div>
+  <div class="sep"></div>
+  <div>PWR <span style="color: var(--hud-gold-bright)">98.4%</span></div>
+  <div class="sep"></div>
+  <button class="audio-toggle" id="audioToggle" title="Audio On/Off">
+    <svg id="audioIconOn" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+    </svg>
+    <svg id="audioIconOff" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+      <line x1="22" y1="9" x2="16" y2="15"/>
+      <line x1="16" y1="9" x2="22" y2="15"/>
+    </svg>
+    <span id="audioLabel">AUDIO</span>
+  </button>
+</div>
+
+<!-- CENTER -->
+<div class="center-stage">
+  <div class="ring r1"></div>
+  <div class="ring r2"></div>
+  <div class="ring r3"></div>
+  <div class="ring r4"></div>
+  <div class="tick-ring" id="tickRing"></div>
+  <div class="center-info">
+    <svg class="center-reticle" viewBox="0 0 60 60" width="60" height="60">
+      <circle cx="30" cy="30" r="2" fill="var(--hud-gold)" filter="drop-shadow(0 0 4px var(--hud-gold))"/>
+      <circle cx="30" cy="30" r="14" fill="none" stroke="var(--hud-gold)" stroke-width="0.7" opacity="0.8"/>
+      <line x1="30" y1="6" x2="30" y2="14" stroke="var(--hud-gold)" stroke-width="1"/>
+      <line x1="30" y1="46" x2="30" y2="54" stroke="var(--hud-gold)" stroke-width="1"/>
+      <line x1="6" y1="30" x2="14" y2="30" stroke="var(--hud-gold)" stroke-width="1"/>
+      <line x1="46" y1="30" x2="54" y2="30" stroke="var(--hud-gold)" stroke-width="1"/>
+    </svg>
+    <div class="center-label">// HEADS UP DISPLAY //</div>
+  </div>
+</div>
+
+<!-- WEATHER PANEL -->
+<div class="panel angled panel-weather">
+  <div class="panel-header">
+    <span>◆ ATMOSPHERIC SCAN</span>
+    <span class="panel-id">W-001</span>
+  </div>
+  <div class="panel-body">
+    <div class="weather-main">
+      <svg class="weather-icon" viewBox="0 0 64 64" fill="none">
+        <defs>
+          <radialGradient id="sunG" cx="50%" cy="50%">
+            <stop offset="0%" stop-color="#ffd98a"/>
+            <stop offset="100%" stop-color="#ffb84d"/>
+          </radialGradient>
+        </defs>
+        <circle cx="32" cy="32" r="12" fill="url(#sunG)" filter="drop-shadow(0 0 6px #ffb84d)"/>
+        <g stroke="#ffb84d" stroke-width="2" stroke-linecap="round">
+          <line x1="32" y1="6" x2="32" y2="14"/>
+          <line x1="32" y1="50" x2="32" y2="58"/>
+          <line x1="6" y1="32" x2="14" y2="32"/>
+          <line x1="50" y1="32" x2="58" y2="32"/>
+          <line x1="13" y1="13" x2="19" y2="19"/>
+          <line x1="45" y1="45" x2="51" y2="51"/>
+          <line x1="13" y1="51" x2="19" y2="45"/>
+          <line x1="45" y1="19" x2="51" y2="13"/>
+        </g>
+      </svg>
+      <div>
+        <div class="weather-temp">22<span class="unit">°C</span></div>
+        <div class="weather-condition">CLEAR / 晴れ</div>
+        <div class="weather-loc">▸ TOKYO, JP // 35.6762°N 139.6503°E</div>
+      </div>
+    </div>
+    <div class="weather-grid">
+      <div class="stat">
+        <div class="stat-label">湿度</div>
+        <div class="stat-value">58<span class="stat-unit">%</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">風速</div>
+        <div class="stat-value">12<span class="stat-unit">km</span></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">UV</div>
+        <div class="stat-value">5<span class="stat-unit">/10</span></div>
+      </div>
+    </div>
+    <div class="forecast">
+      <div class="forecast-item"><div class="forecast-day">TUE</div><div class="forecast-icon">☀</div><div class="forecast-temp">24°</div></div>
+      <div class="forecast-item"><div class="forecast-day">WED</div><div class="forecast-icon">⛅</div><div class="forecast-temp">21°</div></div>
+      <div class="forecast-item"><div class="forecast-day">THU</div><div class="forecast-icon">☔</div><div class="forecast-temp">18°</div></div>
+      <div class="forecast-item"><div class="forecast-day">FRI</div><div class="forecast-icon">⛅</div><div class="forecast-temp">20°</div></div>
+      <div class="forecast-item"><div class="forecast-day">SAT</div><div class="forecast-icon">☀</div><div class="forecast-temp">23°</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- BIO PANEL -->
+<div class="panel angled panel-bio">
+  <div class="panel-header">
+    <span>◆ BIOMETRIC TELEMETRY</span>
+    <span class="panel-id">B-002</span>
+  </div>
+  <div class="panel-body">
+    <div class="bio-row">
+      <span class="bio-label">VITALITY</span>
+      <div class="bar-track"><div class="bar-fill" style="width: 87%"></div></div>
+      <span class="bio-value">87%</span>
+    </div>
+    <div class="bio-row">
+      <span class="bio-label">HYDRO</span>
+      <div class="bar-track"><div class="bar-fill" style="width: 64%"></div></div>
+      <span class="bio-value">64%</span>
+    </div>
+    <div class="bio-row">
+      <span class="bio-label">SLEEP</span>
+      <div class="bar-track"><div class="bar-fill" style="width: 72%"></div></div>
+      <span class="bio-value">7.2H</span>
+    </div>
+    <div class="bio-row">
+      <span class="bio-label">FOCUS</span>
+      <div class="bar-track"><div class="bar-fill" style="width: 91%"></div></div>
+      <span class="bio-value">91%</span>
+    </div>
+    <div class="bio-row">
+      <span class="bio-label">STEPS</span>
+      <div class="bar-track"><div class="bar-fill" style="width: 42%"></div></div>
+      <span class="bio-value">4,217</span>
+    </div>
+
+    <div class="ecg-box">
+      <div class="ecg-header">
+        <span class="ecg-title">CARDIAC RHYTHM</span>
+        <span class="ecg-bpm" id="bpm">68<span class="label">BPM</span></span>
+      </div>
+      <svg class="ecg-svg" viewBox="0 0 300 50" preserveAspectRatio="none">
+        <path id="ecgPath" class="ecg-line" d="M0,25 L20,25 L25,25 L30,15 L35,35 L40,10 L45,40 L50,25 L80,25 L85,25 L90,15 L95,35 L100,10 L105,40 L110,25 L140,25 L145,25 L150,15 L155,35 L160,10 L165,40 L170,25 L200,25 L205,25 L210,15 L215,35 L220,10 L225,40 L230,25 L260,25 L265,25 L270,15 L275,35 L280,10 L285,40 L290,25 L300,25"/>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- MAP PANEL -->
+<div class="panel angled panel-map">
+  <div class="panel-header">
+    <span>◆ TACTICAL MAP / 地理スキャン</span>
+    <span class="panel-id">M-003</span>
+  </div>
+  <div class="map-canvas">
+    <div class="reticle tl"></div>
+    <div class="reticle tr"></div>
+    <div class="reticle bl"></div>
+    <div class="reticle br"></div>
+    <svg class="map-svg" viewBox="0 0 300 220" preserveAspectRatio="xMidYMid slice">
+      <defs>
+        <radialGradient id="sweepGrad">
+          <stop offset="0%" stop-color="rgba(77, 219, 255, 0)"/>
+          <stop offset="70%" stop-color="rgba(77, 219, 255, 0)"/>
+          <stop offset="99%" stop-color="rgba(77, 219, 255, 0.5)"/>
+          <stop offset="100%" stop-color="rgba(77, 219, 255, 0)"/>
+        </radialGradient>
+        <linearGradient id="sweepLine" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="rgba(77, 219, 255, 0)"/>
+          <stop offset="100%" stop-color="rgba(77, 219, 255, 0.7)"/>
+        </linearGradient>
+      </defs>
+
+      <!-- City blocks -->
+      <rect class="map-block" x="20" y="20" width="55" height="40"/>
+      <rect class="map-block" x="85" y="20" width="40" height="40"/>
+      <rect class="map-block" x="135" y="20" width="60" height="35"/>
+      <rect class="map-block" x="205" y="20" width="50" height="40"/>
+      <rect class="map-block" x="20" y="70" width="50" height="50"/>
+      <rect class="map-block" x="80" y="70" width="45" height="55"/>
+      <rect class="map-block" x="135" y="65" width="55" height="45"/>
+      <rect class="map-block" x="200" y="70" width="55" height="50"/>
+      <rect class="map-block" x="20" y="130" width="40" height="40"/>
+      <rect class="map-block" x="70" y="135" width="55" height="50"/>
+      <rect class="map-block" x="135" y="120" width="50" height="55"/>
+      <rect class="map-block" x="195" y="130" width="60" height="55"/>
+      <rect class="map-block" x="265" y="20" width="20" height="40"/>
+      <rect class="map-block" x="265" y="70" width="20" height="50"/>
+      <rect class="map-block" x="265" y="130" width="20" height="55"/>
+
+      <!-- streets -->
+      <line class="map-road" x1="0" y1="65" x2="300" y2="65"/>
+      <line class="map-road" x1="0" y1="125" x2="300" y2="125"/>
+      <line class="map-road" x1="80" y1="0" x2="80" y2="220"/>
+      <line class="map-road" x1="200" y1="0" x2="200" y2="220"/>
+      <!-- highway diagonal -->
+      <path class="map-highway" d="M0,180 Q80,160 130,170 T260,150 L300,140"/>
+      <line class="map-line" x1="130" y1="0" x2="130" y2="220"/>
+      <line class="map-line" x1="260" y1="0" x2="260" y2="220"/>
+
+      <!-- POI markers -->
+      <g class="map-marker" transform="translate(60,40)"><polygon points="0,-5 4,3 -4,3"/></g>
+      <g class="map-marker" transform="translate(170,90)"><polygon points="0,-5 4,3 -4,3"/></g>
+      <g class="map-marker" transform="translate(230,160)"><polygon points="0,-5 4,3 -4,3"/></g>
+      <g class="map-marker" transform="translate(110,150)"><polygon points="0,-5 4,3 -4,3"/></g>
+
+      <!-- radar sweep -->
+      <g transform="translate(150 110)">
+        <path class="radar-sweep" d="M0,0 L0,-110 A110,110 0 0,1 95,-55 Z" opacity="0.4"/>
+        <line x1="0" y1="0" x2="0" y2="-110" stroke="var(--hud-cyan)" stroke-width="1" opacity="0.6">
+          <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="4s" repeatCount="indefinite"/>
+        </line>
+      </g>
+
+      <!-- user position -->
+      <g transform="translate(150 110)">
+        <circle class="user-pos-ring" r="5">
+          <animate attributeName="r" from="5" to="35" dur="2s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" from="0.9" to="0" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        <circle class="user-pos-ring" r="5">
+          <animate attributeName="r" from="5" to="35" dur="2s" begin="0.7s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" from="0.9" to="0" dur="2s" begin="0.7s" repeatCount="indefinite"/>
+        </circle>
+        <circle class="user-pos" r="4"/>
+      </g>
+
+      <!-- coordinate text -->
+      <text x="10" y="212" font-family="Share Tech Mono" font-size="8" fill="rgba(77,219,255,0.6)">35.6762°N // 139.6503°E</text>
+      <text x="220" y="212" font-family="Share Tech Mono" font-size="8" fill="rgba(255,184,77,0.7)">RNG 1.2KM</text>
+      <text x="10" y="14" font-family="Share Tech Mono" font-size="8" fill="rgba(77,219,255,0.5)">N ↑</text>
+    </svg>
+  </div>
+</div>
+
+<!-- RELATED INFO (revealed after scan) -->
+<div class="panel angled panel-recs" id="panelRecs">
+  <div class="panel-header">
+    <span>◆ RELATED INTEL / 関連情報</span>
+    <span class="panel-id">R-004</span>
+  </div>
+  <div class="panel-body">
+    <!-- スキャン待機中のプレースホルダー -->
+    <div class="recs-placeholder">
+      <div>▸ AWAITING SCAN</div>
+      <div class="blink">// データなし //</div>
+      <div style="margin-top:10px; font-size:9px; opacity:0.5;">SCAN TO POPULATE</div>
+    </div>
+    <div class="rec-item">
+      <div class="rec-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--hud-cyan)" stroke-width="1.8">
+          <circle cx="12" cy="8" r="4"/><path d="M4 21v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2"/>
+        </svg>
+      </div>
+      <div class="rec-content">
+        <div class="rec-title">プロファイルを詳細表示</div>
+        <div class="rec-meta">▸ FULL PROFILE // 詳細データを展開</div>
+      </div>
+      <div class="rec-priority high">P-01</div>
+    </div>
+    <div class="rec-item">
+      <div class="rec-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--hud-cyan)" stroke-width="1.8">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+        </svg>
+      </div>
+      <div class="rec-content">
+        <div class="rec-title">関連記事・インタビュー</div>
+        <div class="rec-meta">▸ 12件 // 直近 2024-2025</div>
+      </div>
+      <div class="rec-priority">P-02</div>
+    </div>
+    <div class="rec-item">
+      <div class="rec-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--hud-cyan)" stroke-width="1.8">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <div class="rec-content">
+        <div class="rec-title">富士通デザインセンター</div>
+        <div class="rec-meta">▸ ORG SIZE // 約200名 / グローバル</div>
+      </div>
+      <div class="rec-priority">P-03</div>
+    </div>
+    <div class="rec-item">
+      <div class="rec-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--hud-cyan)" stroke-width="1.8">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+        </svg>
+      </div>
+      <div class="rec-content">
+        <div class="rec-title">SAKE WAVE FES プロジェクト</div>
+        <div class="rec-meta">▸ 三芳菊酒造 × 加振醸造</div>
+      </div>
+      <div class="rec-priority">P-04</div>
+    </div>
+    <div class="rec-item">
+      <div class="rec-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="var(--hud-cyan)" stroke-width="1.8">
+          <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+      </div>
+      <div class="rec-content">
+        <div class="rec-title">グローバル展開</div>
+        <div class="rec-meta">▸ US / IN / EU 拠点と連携中</div>
+      </div>
+      <div class="rec-priority">P-05</div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM BAR -->
+<div class="bottom-bar">
+  <div class="telem"><span class="telem-label">CPU</span><span class="telem-val" id="cpu">23%</span></div>
+  <div class="telem"><span class="telem-label">MEM</span><span class="telem-val" id="mem">4.2G</span></div>
+  <div class="telem"><span class="telem-label">NET</span><span class="telem-val">▲ 142 ▼ 28 MB/s</span></div>
+  <div class="telem"><span class="telem-label">LAT</span><span class="telem-val" id="lat">12ms</span></div>
+  <div class="telem"><span class="telem-label">SAT</span><span class="telem-val">GPS-LOCK 14</span></div>
+  <div class="telem"><span class="telem-label">SEC</span><span class="telem-val" style="color: #00ff66">SECURE</span></div>
+</div>
+
+</div><!-- /scene-3d -->
+
+<!-- crosshair follows mouse -->
+<div class="crosshair" id="crosshair">
+  <div class="crosshair-ring"></div>
+</div>
+
+<!-- overlays -->
+<div class="noise"></div>
+<div class="scanlines"></div>
+<div class="vignette"></div>
+
+<!-- ===== WEATHER SCAN DEMO ===== -->
+
+<!-- sky zone hint -->
+<div class="scan-hint">▸ HOLD UPPER ZONE TO INITIATE SCAN ◂</div>
+
+<!-- invisible hold zone (upper half) -->
+<div class="sky-zone" id="skyZone"></div>
+
+<!-- hold-to-scan progress ring (follows cursor) -->
+<div class="hold-ring" id="holdRing">
+  <svg viewBox="0 0 72 72">
+    <circle class="hr-track" cx="36" cy="36" r="30"/>
+    <circle class="hr-fill"  cx="36" cy="36" r="30" id="hrFill"/>
+  </svg>
+  <div class="hr-label" id="hrLabel">HOLD</div>
+</div>
+
+<!-- full-screen radar overlay (horizontal scan line) -->
+<div class="radar-overlay" id="radarOverlay">
+
+  <!-- Horizontal scanlines grid + rails -->
+  <div class="scan-grid"></div>
+  <div class="scan-rails"></div>
+
+  <!-- Profile detection boxes — positioned in the upper half -->
+  <div class="cloud-box" id="box1" style="top:18%; left:14%; width:18%; height:14%;">
+    <div class="cloud-box-label">SCANNING TARGET A...</div>
+  </div>
+  <div class="cloud-box" id="box2" style="top:22%; left:42%; width:22%; height:18%;">
+    <div class="cloud-box-label">PARSING DATA STREAM B...</div>
+  </div>
+  <div class="cloud-box" id="box3" style="top:14%; left:72%; width:14%; height:12%;">
+    <div class="cloud-box-label">CROSS-REF SOURCE C...</div>
+  </div>
+
+  <!-- Trail and main scan line -->
+  <div class="scan-trail" id="scanTrail"></div>
+  <div class="scan-line" id="scanLine"></div>
+
+  <!-- Coordinate readout that follows the scan line -->
+  <div class="scan-readout" id="scanReadout">X: 0.00° // ALT: ---- m</div>
+
+  <div class="radar-status" id="radarStatus">
+    DEEP SCAN IN PROGRESS
+    <span class="sub" id="radarSub">// PROCESSING DATA //</span>
+  </div>
+
+  <div class="radar-progress-wrap">
+    <div class="radar-progress-label" id="progressLabel">INITIALIZING SCAN</div>
+    <div class="radar-progress-track">
+      <div class="radar-progress-fill" id="progressFill"></div>
+    </div>
+    <div class="radar-progress-pct" id="progressPct">0%</div>
+  </div>
+</div>
+
+<!-- results panel (slides up) -->
+<div class="weather-result-panel" id="weatherResult">
+  <div class="wrp-header">
+    <span class="wrp-title">◆ PROFILE ANALYSIS COMPLETE // プロファイル解析完了</span>
+    <span class="wrp-close" id="wrpClose">✕ CLOSE</span>
+  </div>
+  <div class="wrp-body">
+
+    <!-- Left: profile summary -->
+    <div class="wrp-analysis">
+      <div class="wrp-section-title">▸ PROFILE SUMMARY / 人物プロファイル</div>
+      <div class="cloud-result-row"><span class="crk">氏名</span><span class="crv">宇田 哲也（うだ てつや）</span></div>
+      <div class="cloud-result-row"><span class="crk">所属</span><span class="crv">富士通株式会社</span></div>
+      <div class="cloud-result-row"><span class="crk">役職</span><span class="crv ok">デザインセンター長</span></div>
+      <div class="cloud-result-row"><span class="crk">就任</span><span class="crv">2020年4月</span></div>
+      <div class="cloud-result-row"><span class="crk">組織規模</span><span class="crv">約 200名</span></div>
+      <div class="cloud-result-row"><span class="crk">学歴</span><span class="crv">大阪大学院 通信工学</span></div>
+      <div class="cloud-result-row"><span class="crk">前職</span><span class="crv">日立製作所（1996〜）</span></div>
+      <div class="cloud-result-row"><span class="crk">特徴</span><span class="crv ok">エンジニア出身デザイントップ</span></div>
+    </div>
+
+    <!-- Right: career timeline -->
+    <div class="wrp-timeline">
+      <div class="wrp-section-title">▸ CAREER TIMELINE / 経歴の流れ</div>
+      <div class="timeline-strip" id="timelineStrip"></div>
+      <div class="rain-band-label">▸ KEY TRANSITION / 大きな転機</div>
+      <div class="rain-band">
+        <div class="rain-segment" style="left:78%; width:6%; background:var(--hud-gold); box-shadow:0 0 6px var(--hud-gold);"></div>
+      </div>
+    </div>
+
+    <!-- Action cards: 4 key points -->
+    <div class="wrp-actions">
+      <div class="action-card" id="ac1">
+        <div class="ac-icon">🎓</div>
+        <div><div class="ac-label">経歴の転換点</div><div class="ac-text">49歳でエンジニアから<br>デザイン組織トップへ</div></div>
+      </div>
+      <div class="action-card" id="ac2">
+        <div class="ac-icon">🌐</div>
+        <div><div class="ac-label">海外経験</div><div class="ac-text">2015年〜シリコンバレー駐在<br>自組織のDX推進を主導</div></div>
+      </div>
+      <div class="action-card" id="ac3">
+        <div class="ac-icon">🎨</div>
+        <div><div class="ac-label">推進活動</div><div class="ac-text">デザイン経営 × DX<br>200名規模のグローバル展開</div></div>
+      </div>
+      <div class="action-card" id="ac4">
+        <div class="ac-icon">🍶</div>
+        <div><div class="ac-label">最新プロジェクト</div><div class="ac-text">徳島・三芳菊酒造と<br>「SAKE WAVE FES」開発</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<!-- ===== END WEATHER SCAN DEMO ===== -->
+
+<script>
+  // ===== Tick marks on outer ring =====
+  (function makeTicks() {
+    const ring = document.getElementById('tickRing');
+    for (let i = 0; i < 60; i++) {
+      const tick = document.createElement('div');
+      tick.className = 'tick';
+      const isMajor = i % 5 === 0;
+      tick.style.transform = `translateX(-50%) rotate(${i * 6}deg)`;
+      tick.style.height = isMajor ? '16px' : '6px';
+      tick.style.opacity = isMajor ? '1' : '0.4';
+      tick.style.background = isMajor ? 'var(--hud-gold)' : 'var(--hud-cyan)';
+      ring.appendChild(tick);
+    }
+  })();
+
+  // ===== Clock =====
+  const pad = n => String(n).padStart(2, '0');
+  const topClock = document.getElementById('topClock');
+  const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+  function updateClock() {
+    const d = new Date();
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    const date = `${days[d.getDay()]} ${pad(d.getMonth()+1)}.${pad(d.getDate())}.${d.getFullYear()}`;
+    topClock.innerHTML = `<span style="color: var(--hud-cyan-dim); margin-right: 10px;">${date}</span>${time}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ===== Live telemetry jitter =====
+  const cpu = document.getElementById('cpu');
+  const mem = document.getElementById('mem');
+  const lat = document.getElementById('lat');
+  const bpm = document.getElementById('bpm');
+
+  setInterval(() => {
+    cpu.textContent = (18 + Math.random() * 12).toFixed(1) + '%';
+    mem.textContent = (3.8 + Math.random() * 0.8).toFixed(1) + 'G';
+    lat.textContent = (8 + Math.floor(Math.random() * 12)) + 'ms';
+    bpm.firstChild.textContent = (64 + Math.floor(Math.random() * 8));
+  }, 1500);
+
+  // ===== ECG live wave =====
+  const ecgPath = document.getElementById('ecgPath');
+  let ecgOffset = 0;
+  function animateECG() {
+    ecgOffset = (ecgOffset + 1.5) % 60;
+    const points = [];
+    for (let x = 0; x <= 300; x += 2) {
+      let y = 25;
+      const px = (x + ecgOffset) % 60;
+      // QRS-like complex
+      if (px > 25 && px < 30) y = 25 - (px - 25) * 4;
+      else if (px >= 30 && px < 33) y = 5 + (px - 30) * 13;
+      else if (px >= 33 && px < 36) y = 44 - (px - 33) * 6;
+      else if (px >= 36 && px < 40) y = 26;
+      points.push(`${x},${y.toFixed(1)}`);
+    }
+    ecgPath.setAttribute('d', 'M' + points.join(' L'));
+    requestAnimationFrame(animateECG);
+  }
+  animateECG();
+
+  // ===== Audio System (Web Audio API + Web Speech API) =====
+  const Audio = (() => {
+    let ctx = null;
+    let masterGain = null;
+    let enabled = true;       // user preference
+    let userActivated = false; // unlocked after first user interaction
+    let activeNodes = [];      // track active oscillators for stop()
+
+    function ensureCtx() {
+      if (!ctx) {
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = ctx.createGain();
+        masterGain.gain.value = 0.5;
+        masterGain.connect(ctx.destination);
+      }
+      // Browsers may suspend AudioContext until user interaction
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+
+    function isOn() { return enabled && userActivated; }
+
+    function setEnabled(v) {
+      enabled = v;
+      if (!v) stopAll();
+    }
+
+    function activate() {
+      userActivated = true;
+      ensureCtx();
+    }
+
+    function stopAll() {
+      activeNodes.forEach(n => { try { n.stop(); } catch(e){} });
+      activeNodes = [];
+      try { window.speechSynthesis.cancel(); } catch(e){}
+      // 録音済み音声ファイルも停止
+      document.querySelectorAll('audio[id^="snd"]').forEach(a => {
+        try { a.pause(); a.currentTime = 0; } catch(e){}
+      });
+    }
+
+    // Helper: create an oscillator that auto-cleans
+    function makeOsc(type, freq, startTime, stopTime, gainEnv) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      osc.connect(g);
+      g.connect(masterGain);
+      // gainEnv: array of [time, value] pairs
+      g.gain.setValueAtTime(0, startTime);
+      gainEnv.forEach(([t, v]) => g.gain.linearRampToValueAtTime(v, t));
+      osc.start(startTime);
+      osc.stop(stopTime);
+      activeNodes.push(osc);
+      osc.onended = () => {
+        activeNodes = activeNodes.filter(n => n !== osc);
+      };
+      return { osc, gain: g };
+    }
+
+    // ---- Effects ----
+    function powerOn() {
+      if (!isOn()) return;
+      ensureCtx();
+      const t = ctx.currentTime;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(80, t);
+      o.frequency.exponentialRampToValueAtTime(220, t + 0.5);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.18, t + 0.1);
+      g.gain.linearRampToValueAtTime(0, t + 0.55);
+      o.connect(g); g.connect(masterGain);
+      o.start(t); o.stop(t + 0.6);
+      activeNodes.push(o);
+    }
+
+    function scanSweep(durationSec) {
+      if (!isOn()) return;
+      ensureCtx();
+      const t = ctx.currentTime;
+      // Continuous rising/falling sweep with vibrato
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      const lfo = ctx.createOscillator();
+      const lfoGain = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(800, t);
+      o.frequency.linearRampToValueAtTime(1600, t + durationSec * 0.5);
+      o.frequency.linearRampToValueAtTime(900, t + durationSec);
+      // Vibrato
+      lfo.frequency.value = 18;
+      lfoGain.gain.value = 30;
+      lfo.connect(lfoGain);
+      lfoGain.connect(o.frequency);
+      // Volume envelope
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.06, t + 0.15);
+      g.gain.linearRampToValueAtTime(0.06, t + durationSec - 0.2);
+      g.gain.linearRampToValueAtTime(0, t + durationSec);
+      o.connect(g); g.connect(masterGain);
+      o.start(t); lfo.start(t);
+      o.stop(t + durationSec); lfo.stop(t + durationSec);
+      activeNodes.push(o, lfo);
+    }
+
+    function detectPing() {
+      if (!isOn()) return;
+      ensureCtx();
+      const t = ctx.currentTime;
+      // Two-tone "ping" (high, then slightly higher)
+      [
+        { freq: 1320, start: 0,    dur: 0.08 },
+        { freq: 1980, start: 0.06, dur: 0.12 },
+      ].forEach(({freq, start, dur}) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0, t + start);
+        g.gain.linearRampToValueAtTime(0.18, t + start + 0.01);
+        g.gain.exponentialRampToValueAtTime(0.001, t + start + dur);
+        o.connect(g); g.connect(masterGain);
+        o.start(t + start); o.stop(t + start + dur + 0.05);
+        activeNodes.push(o);
+      });
+    }
+
+    function complete() {
+      if (!isOn()) return;
+      ensureCtx();
+      const t = ctx.currentTime;
+      // Ascending arpeggio: C5-E5-G5-C6
+      const notes = [523, 659, 784, 1047];
+      notes.forEach((f, i) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'triangle';
+        o.frequency.value = f;
+        const start = t + i * 0.08;
+        g.gain.setValueAtTime(0, start);
+        g.gain.linearRampToValueAtTime(0.15, start + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, start + 0.35);
+        o.connect(g); g.connect(masterGain);
+        o.start(start); o.stop(start + 0.4);
+        activeNodes.push(o);
+      });
+    }
+
+    function uiBlip() {
+      if (!isOn()) return;
+      ensureCtx();
+      const t = ctx.currentTime;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'square';
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.04, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+      o.connect(g); g.connect(masterGain);
+      o.start(t); o.stop(t + 0.08);
+      activeNodes.push(o);
+    }
+
+    // ---- TTS ----
+    let jaVoice = null;
+    function pickJapaneseVoice() {
+      if (!('speechSynthesis' in window)) return null;
+      const voices = window.speechSynthesis.getVoices();
+      // Prefer ja-JP voices; otherwise any voice with 'Japanese' or fall back to default
+      jaVoice = voices.find(v => v.lang === 'ja-JP')
+             || voices.find(v => v.lang && v.lang.startsWith('ja'))
+             || null;
+      return jaVoice;
+    }
+    if ('speechSynthesis' in window) {
+      pickJapaneseVoice();
+      window.speechSynthesis.onvoiceschanged = pickJapaneseVoice;
+    }
+
+    function speak(text, opts = {}) {
+      if (!isOn()) return;
+      if (!('speechSynthesis' in window)) return;
+      try { window.speechSynthesis.cancel(); } catch(e){}
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'ja-JP';
+      u.rate = opts.rate || 1.05;
+      u.pitch = opts.pitch || 1.0;
+      u.volume = opts.volume || 0.9;
+      if (jaVoice) u.voice = jaVoice;
+      window.speechSynthesis.speak(u);
+    }
+
+    return {
+      activate, isOn, setEnabled, stopAll,
+      powerOn, scanSweep, detectPing, complete, uiBlip, speak,
+    };
+  })();
+
+  // ===== Audio toggle button =====
+  const audioToggleBtn = document.getElementById('audioToggle');
+  const audioIconOn  = document.getElementById('audioIconOn');
+  const audioIconOff = document.getElementById('audioIconOff');
+  const audioLabel   = document.getElementById('audioLabel');
+  let audioMuted = false;
+
+  function setAudioUI(muted) {
+    audioMuted = muted;
+    Audio.setEnabled(!muted);
+    audioIconOn.style.display  = muted ? 'none' : '';
+    audioIconOff.style.display = muted ? '' : 'none';
+    audioLabel.textContent = muted ? 'MUTED' : 'AUDIO';
+    audioToggleBtn.classList.toggle('muted', muted);
+  }
+
+  audioToggleBtn.addEventListener('click', () => {
+    Audio.activate(); // first click also unlocks audio context
+    setAudioUI(!audioMuted);
+    if (!audioMuted) Audio.uiBlip();
+  });
+
+  // Activate audio context on any user interaction (browsers require gesture)
+  function unlockAudio() {
+    Audio.activate();
+    document.removeEventListener('click', unlockAudio);
+    document.removeEventListener('keydown', unlockAudio);
+    document.removeEventListener('touchstart', unlockAudio);
+  }
+  document.addEventListener('click', unlockAudio);
+  document.addEventListener('keydown', unlockAudio);
+  document.addEventListener('touchstart', unlockAudio);
+
+  // ===== Career Timeline Builder =====
+  (function buildTimeline() {
+    const slots = [
+      { t:'1996', icon:'🎓', label:'入社',   impact:30, color:'#4ddbff' },
+      { t:'2000', icon:'📡', label:'光通信', impact:40, color:'#4ddbff' },
+      { t:'2005', icon:'🌐', label:'海外',   impact:50, color:'#7ec8ff' },
+      { t:'2010', icon:'⚙', label:'開発',   impact:55, color:'#7ec8ff' },
+      { t:'2014', icon:'📊', label:'分析',   impact:60, color:'#7ec8ff' },
+      { t:'2015', icon:'✈', label:'SV駐在', impact:75, color:'#ffb84d' },
+      { t:'2018', icon:'🔄', label:'DX推進', impact:80, color:'#ffb84d' },
+      { t:'2020', icon:'🏢', label:'富士通', impact:90, color:'#ffd98a' },
+      { t:'2020', icon:'🎨', label:'就任',   impact:100, color:'#ffd98a' },
+      { t:'2022', icon:'🌍', label:'GL展開', impact:90, color:'#ffd98a' },
+      { t:'2024', icon:'🍶', label:'酒蔵',   impact:85, color:'#ffd98a' },
+      { t:'2025', icon:'⭐', label:'現在',   impact:95, color:'#ffd98a' },
+    ];
+    const strip = document.getElementById('timelineStrip');
+    slots.forEach(s => {
+      const barH = Math.max(4, Math.round(s.impact * 0.55));
+      strip.innerHTML += `
+        <div class="tl-slot">
+          <div class="tl-bar-wrap">
+            <div class="tl-bar" style="height:${barH}px;background:${s.color};opacity:0.75"></div>
+          </div>
+          <div class="tl-icon">${s.icon}</div>
+          <div class="tl-temp">${s.label}</div>
+          <div class="tl-time">${s.t}</div>
+        </div>`;
+    });
+  })();
+
+  // ===== Weather Scan Sequence =====
+  const skyZone       = document.getElementById('skyZone');
+  const holdRing      = document.getElementById('holdRing');
+  const hrFill        = document.getElementById('hrFill');
+  const hrLabel       = document.getElementById('hrLabel');
+  const radarOverlay  = document.getElementById('radarOverlay');
+  const radarStatus   = document.getElementById('radarStatus');
+  const radarSub      = document.getElementById('radarSub');
+  const progressFill  = document.getElementById('progressFill');
+  const progressPct   = document.getElementById('progressPct');
+  const progressLabel = document.getElementById('progressLabel');
+  const weatherResult = document.getElementById('weatherResult');
+  const wrpClose      = document.getElementById('wrpClose');
+
+  const HOLD_MS = 1600;   // ms needed to hold
+  const CIRC    = 188.5;  // stroke-dasharray circumference
+
+  let holdTimer = null;
+  let holdStart = null;
+  let holdAF    = null;
+  let scanning  = false;
+
+  function setHoldRingPos(x, y) {
+    holdRing.style.left = x + 'px';
+    holdRing.style.top  = y + 'px';
+  }
+
+  function startHold(x, y) {
+    if (scanning) return;
+    holdStart = Date.now();
+    holdRing.style.opacity = '1';
+    setHoldRingPos(x, y);
+    animateHold(x, y);
+    Audio.powerOn();
+  }
+
+  function animateHold(x, y) {
+    const elapsed = Date.now() - holdStart;
+    const frac = Math.min(elapsed / HOLD_MS, 1);
+    hrFill.style.strokeDashoffset = CIRC * (1 - frac);
+    hrLabel.textContent = frac >= 1 ? 'GO!' : 'HOLD';
+
+    if (frac >= 1) {
+      cancelAnimationFrame(holdAF);
+      holdRing.style.opacity = '0';
+      triggerScan();
+      return;
+    }
+    holdAF = requestAnimationFrame(() => animateHold(x, y));
+  }
+
+  function cancelHold() {
+    cancelAnimationFrame(holdAF);
+    holdStart = null;
+    holdRing.style.opacity = '0';
+    hrFill.style.strokeDashoffset = CIRC;
+  }
+
+  // pointer events on sky zone
+  skyZone.addEventListener('mousedown',  e => startHold(e.clientX, e.clientY));
+  skyZone.addEventListener('touchstart', e => { const t = e.touches[0]; startHold(t.clientX, t.clientY); }, {passive:true});
+  skyZone.addEventListener('mousemove',  e => { if (holdStart) setHoldRingPos(e.clientX, e.clientY); });
+  skyZone.addEventListener('mouseup',    cancelHold);
+  skyZone.addEventListener('mouseleave', cancelHold);
+  skyZone.addEventListener('touchend',   cancelHold);
+
+  function triggerScan() {
+    if (scanning) return;
+    scanning = true;
+
+    // grab scan elements
+    const scanLine    = document.getElementById('scanLine');
+    const scanTrail   = document.getElementById('scanTrail');
+    const scanReadout = document.getElementById('scanReadout');
+
+    // reset scan line position
+    scanLine.style.transition  = 'none';
+    scanTrail.style.transition = 'none';
+    scanLine.style.transform   = 'translateX(0px)';
+    scanTrail.style.transform  = 'translateX(-260px)';
+    scanReadout.style.left     = '0px';
+    scanReadout.classList.remove('show');
+
+    // show radar overlay
+    radarOverlay.classList.add('active');
+
+    // boxes to detect at (left% of viewport)
+    const detections = [
+      { id: 'box1', triggerLeftPct: 32,  status: ['TARGET ACQUIRED',    '// ターゲット捕捉 //'] },
+      { id: 'box2', triggerLeftPct: 64,  status: ['DATA STREAM LOCKED', '// データストリーム接続 //'] },
+      { id: 'box3', triggerLeftPct: 86,  status: ['CROSS-REFERENCE OK', '// 相互参照完了 //'] },
+    ];
+    let detectIdx = 0;
+
+    // status phases (driven by progress %)
+    const phases = [
+      { atPct: 0,  label: 'INITIALIZING SCAN',          sub: '// SCAN START //' },
+      { atPct: 25, label: 'DATA EXTRACTION',             sub: '// EXTRACTING DATA //' },
+      { atPct: 50, label: 'PATTERN ANALYSIS',            sub: '// ANALYZING PATTERNS //' },
+      { atPct: 75, label: 'CROSS-REFERENCING SOURCES',   sub: '// SYNCING DATABASE //' },
+      { atPct: 95, label: 'COMPILING REPORT',            sub: '// REPORT BUILD //' },
+    ];
+
+    const SCAN_MS = 4200;  // total left → right time
+    const startTime = Date.now();
+
+    // 🔊 start continuous sweep tone for the duration of the scan
+    Audio.scanSweep(SCAN_MS / 1000);
+
+    function step() {
+      const t = Math.min((Date.now() - startTime) / SCAN_MS, 1);
+      const w = window.innerWidth;
+      const x = t * w;
+      const pct = Math.round(t * 100);
+
+      // move scan line + trail
+      scanLine.style.transform  = `translateX(${x}px)`;
+      scanTrail.style.transform = `translateX(${x - 240}px)`;
+
+      // readout
+      if (t > 0.02 && t < 0.98) {
+        scanReadout.classList.add('show');
+        scanReadout.style.left = x + 'px';
+        const hexA = Math.floor(t * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+        const hexB = Math.floor(Math.random() * 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+        scanReadout.textContent = `0x${hexA} // BUF: ${hexB} // ${Math.round(t * 100)}%`;
+      }
+
+      // progress bar
+      progressFill.style.width = pct + '%';
+      progressPct.textContent  = pct + '%';
+
+      // trigger detections as scan line passes their position
+      const leftPct = t * 100;
+      while (detectIdx < detections.length && leftPct >= detections[detectIdx].triggerLeftPct) {
+        const d = detections[detectIdx];
+        const box = document.getElementById(d.id);
+        if (box) box.classList.add('detected');
+        radarStatus.childNodes[0].textContent = d.status[0] + '\n';
+        radarSub.textContent = d.status[1];
+        Audio.detectPing();   // 🔊 ping on each detection
+        detectIdx++;
+      }
+
+      // status phases
+      for (let i = phases.length - 1; i >= 0; i--) {
+        if (pct >= phases[i].atPct) {
+          progressLabel.textContent = phases[i].label;
+          break;
+        }
+      }
+
+      if (t < 1) requestAnimationFrame(step);
+      else {
+        scanReadout.classList.remove('show');
+        radarStatus.childNodes[0].textContent = 'SCAN COMPLETE\n';
+        radarSub.textContent = '// スキャン完了 //';
+        Audio.complete();     // 🔊 fanfare on completion
+        setTimeout(showResults, 600);
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  function showResults() {
+    radarOverlay.classList.remove('active');
+    weatherResult.classList.add('open');
+    Audio.uiBlip();           // 🔊 panel slide-in blip
+
+    // 右下「関連情報」パネルを表示
+    const panelRecs = document.getElementById('panelRecs');
+    if (panelRecs) panelRecs.classList.add('revealed');
+
+    // 🔊 録音済み音声ファイルを再生（読み込めない場合はTTSにフォールバック）
+    setTimeout(() => {
+      if (audioMuted) return;
+      const snd = document.getElementById('sndScanComplete');
+      const announcement = '解析が完了しました。対象は富士通デザインセンター長、宇田哲也氏。エンジニア出身でありながら49歳でデザイン組織のトップに就任し、約200名のメンバーを率いてデザイン経営とDXを推進しています。';
+      if (snd && snd.src) {
+        snd.currentTime = 0;
+        snd.volume = 0.95;
+        snd.play().catch(err => {
+          console.warn('Audio file failed, falling back to TTS:', err);
+          Audio.speak(announcement);
+        });
+      } else {
+        Audio.speak(announcement);
+      }
+    }, 800);
+
+    // stagger action cards in
+    ['ac1','ac2','ac3','ac4'].forEach((id, i) => {
+      setTimeout(() => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('show');
+      }, 300 + i * 140);
+    });
+  }
+
+  wrpClose.addEventListener('click', () => {
+    weatherResult.classList.remove('open');
+    Audio.uiBlip();
+    Audio.stopAll();   // stop any ongoing TTS/effects
+
+    // 関連情報パネルも非表示に戻す
+    const panelRecs = document.getElementById('panelRecs');
+    if (panelRecs) panelRecs.classList.remove('revealed');
+
+    setTimeout(() => {
+      scanning = false;
+      progressFill.style.width = '0%';
+      progressPct.textContent = '0%';
+      ['box1','box2','box3'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('detected');
+      });
+      ['ac1','ac2','ac3','ac4'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('show');
+      });
+      hrFill.style.strokeDashoffset = CIRC;
+    }, 700);
+  });
+
+  // ===== Crosshair follows mouse =====
+  const crosshair = document.getElementById('crosshair');
+  const scene = document.getElementById('scene3d');
+  let targetRX = 0, targetRY = 0;
+  let curRX = 0, curRY = 0;
+
+  document.addEventListener('mousemove', (e) => {
+    crosshair.style.left = e.clientX + 'px';
+    crosshair.style.top = e.clientY + 'px';
+
+    // parallax: convert mouse to a small head-tilt of the scene
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    const nx = (e.clientX - cx) / cx;  // -1 .. 1
+    const ny = (e.clientY - cy) / cy;
+    targetRY = nx * 4;   // up to 4deg horizontal sway
+    targetRX = -ny * 3;  // up to 3deg vertical tilt
+  });
+  document.addEventListener('mouseleave', () => {
+    crosshair.style.opacity = '0';
+    targetRX = 0; targetRY = 0;
+  });
+  document.addEventListener('mouseenter', () => crosshair.style.opacity = '0.7');
+
+  // smooth interpolation toward target
+  function tickParallax() {
+    curRX += (targetRX - curRX) * 0.06;
+    curRY += (targetRY - curRY) * 0.06;
+    scene.style.transform = `rotateX(${curRX.toFixed(3)}deg) rotateY(${curRY.toFixed(3)}deg)`;
+    requestAnimationFrame(tickParallax);
+  }
+  tickParallax();
+</script>
+
+</body>
+</html>
