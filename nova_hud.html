@@ -1320,35 +1320,37 @@
   .ac-text { font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 11px; color: var(--hud-cyan-bright); line-height: 1.25; }
   .action-card.warn .ac-text { color: #ff8080; }
 
-  /* Audio toggle button in top bar */
-  .audio-toggle {
-    background: transparent;
-    border: 1px solid rgba(77,219,255,0.4);
-    color: var(--hud-cyan-bright);
+  /* Stealth minimize button — disguised as a frame element in top-right */
+  .stealth-min {
+    position: fixed;
+    top: 18px;
+    right: 110px;
+    width: 14px;
+    height: 14px;
+    z-index: 220;
     cursor: pointer;
-    padding: 3px 10px;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid rgba(77, 219, 255, 0.25);
+    border-radius: 1px;
     transition: all 0.2s;
+    opacity: 0.5;
   }
-  .audio-toggle:hover {
+  .stealth-min::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    bottom: 3px;
+    height: 1px;
+    background: rgba(77, 219, 255, 0.6);
+  }
+  .stealth-min:hover {
+    opacity: 1;
     border-color: var(--hud-cyan);
-    background: rgba(77,219,255,0.08);
-    color: var(--hud-cyan-bright);
-    text-shadow: var(--hud-glow);
+    box-shadow: 0 0 6px rgba(77, 219, 255, 0.5);
   }
-  .audio-toggle.muted {
-    color: var(--hud-cyan-dim);
-    border-color: rgba(77,219,255,0.15);
-  }
-  .audio-toggle.muted:hover {
-    color: var(--hud-cyan);
-    border-color: rgba(77,219,255,0.4);
+  .stealth-min:hover::before {
+    background: var(--hud-cyan);
   }
 
   /* ===================================================== */
@@ -1372,12 +1374,11 @@
 <!-- 全画面のクリック受け皿（透明だが必ずブラウザにクリックを届ける） -->
 <div class="click-catcher"></div>
 
-<!-- 録音済み音声ファイル（スキャン完了アナウンス） -->
-<audio id="sndScanComplete" src="sounds/scan_complete.mp3" preload="auto"></audio>
-
 <!-- frame corners -->
 <div class="frame-corner tl"></div>
 <div class="frame-corner tr"></div>
+<!-- ステルス最小化ボタン（フレーム装飾に擬態） -->
+<div class="stealth-min" id="stealthMin" title="Minimize"></div>
 <div class="frame-corner bl"></div>
 <div class="frame-corner br"></div>
 
@@ -1399,19 +1400,6 @@
   <div id="topClock">--:--:--</div>
   <div class="sep"></div>
   <div>PWR <span style="color: var(--hud-gold-bright)">98.4%</span></div>
-  <div class="sep"></div>
-  <button class="audio-toggle" id="audioToggle" title="Audio On/Off">
-    <svg id="audioIconOn" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
-    </svg>
-    <svg id="audioIconOff" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-      <line x1="22" y1="9" x2="16" y2="15"/>
-      <line x1="16" y1="9" x2="22" y2="15"/>
-    </svg>
-    <span id="audioLabel">AUDIO</span>
-  </button>
 </div>
 
 <!-- CENTER -->
@@ -1724,10 +1712,10 @@
 <!-- ===== WEATHER SCAN DEMO ===== -->
 
 <!-- sky zone hint -->
-<div class="scan-hint">▸ HOLD UPPER ZONE TO INITIATE SCAN ◂</div>
+<div class="scan-hint">▸ HOLD [ SPACE ] KEY TO INITIATE SCAN ◂</div>
 
 <!-- invisible hold zone (upper half) -->
-<div class="sky-zone" id="skyZone"></div>
+<!-- sky-zone は撤去（スペースキー入力に変更）-->
 
 <!-- hold-to-scan progress ring (follows cursor) -->
 <div class="hold-ring" id="holdRing">
@@ -1896,242 +1884,6 @@
   }
   animateECG();
 
-  // ===== Audio System (Web Audio API + Web Speech API) =====
-  const Audio = (() => {
-    let ctx = null;
-    let masterGain = null;
-    let enabled = true;       // user preference
-    let userActivated = false; // unlocked after first user interaction
-    let activeNodes = [];      // track active oscillators for stop()
-
-    function ensureCtx() {
-      if (!ctx) {
-        ctx = new (window.AudioContext || window.webkitAudioContext)();
-        masterGain = ctx.createGain();
-        masterGain.gain.value = 0.5;
-        masterGain.connect(ctx.destination);
-      }
-      // Browsers may suspend AudioContext until user interaction
-      if (ctx.state === 'suspended') ctx.resume();
-      return ctx;
-    }
-
-    function isOn() { return enabled && userActivated; }
-
-    function setEnabled(v) {
-      enabled = v;
-      if (!v) stopAll();
-    }
-
-    function activate() {
-      userActivated = true;
-      ensureCtx();
-    }
-
-    function stopAll() {
-      activeNodes.forEach(n => { try { n.stop(); } catch(e){} });
-      activeNodes = [];
-      try { window.speechSynthesis.cancel(); } catch(e){}
-      // 録音済み音声ファイルも停止
-      document.querySelectorAll('audio[id^="snd"]').forEach(a => {
-        try { a.pause(); a.currentTime = 0; } catch(e){}
-      });
-    }
-
-    // Helper: create an oscillator that auto-cleans
-    function makeOsc(type, freq, startTime, stopTime, gainEnv) {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = type;
-      osc.frequency.value = freq;
-      osc.connect(g);
-      g.connect(masterGain);
-      // gainEnv: array of [time, value] pairs
-      g.gain.setValueAtTime(0, startTime);
-      gainEnv.forEach(([t, v]) => g.gain.linearRampToValueAtTime(v, t));
-      osc.start(startTime);
-      osc.stop(stopTime);
-      activeNodes.push(osc);
-      osc.onended = () => {
-        activeNodes = activeNodes.filter(n => n !== osc);
-      };
-      return { osc, gain: g };
-    }
-
-    // ---- Effects ----
-    function powerOn() {
-      if (!isOn()) return;
-      ensureCtx();
-      const t = ctx.currentTime;
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sawtooth';
-      o.frequency.setValueAtTime(80, t);
-      o.frequency.exponentialRampToValueAtTime(220, t + 0.5);
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.18, t + 0.1);
-      g.gain.linearRampToValueAtTime(0, t + 0.55);
-      o.connect(g); g.connect(masterGain);
-      o.start(t); o.stop(t + 0.6);
-      activeNodes.push(o);
-    }
-
-    function scanSweep(durationSec) {
-      if (!isOn()) return;
-      ensureCtx();
-      const t = ctx.currentTime;
-      // Continuous rising/falling sweep with vibrato
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      const lfo = ctx.createOscillator();
-      const lfoGain = ctx.createGain();
-      o.type = 'sine';
-      o.frequency.setValueAtTime(800, t);
-      o.frequency.linearRampToValueAtTime(1600, t + durationSec * 0.5);
-      o.frequency.linearRampToValueAtTime(900, t + durationSec);
-      // Vibrato
-      lfo.frequency.value = 18;
-      lfoGain.gain.value = 30;
-      lfo.connect(lfoGain);
-      lfoGain.connect(o.frequency);
-      // Volume envelope
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.06, t + 0.15);
-      g.gain.linearRampToValueAtTime(0.06, t + durationSec - 0.2);
-      g.gain.linearRampToValueAtTime(0, t + durationSec);
-      o.connect(g); g.connect(masterGain);
-      o.start(t); lfo.start(t);
-      o.stop(t + durationSec); lfo.stop(t + durationSec);
-      activeNodes.push(o, lfo);
-    }
-
-    function detectPing() {
-      if (!isOn()) return;
-      ensureCtx();
-      const t = ctx.currentTime;
-      // Two-tone "ping" (high, then slightly higher)
-      [
-        { freq: 1320, start: 0,    dur: 0.08 },
-        { freq: 1980, start: 0.06, dur: 0.12 },
-      ].forEach(({freq, start, dur}) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = 'sine';
-        o.frequency.value = freq;
-        g.gain.setValueAtTime(0, t + start);
-        g.gain.linearRampToValueAtTime(0.18, t + start + 0.01);
-        g.gain.exponentialRampToValueAtTime(0.001, t + start + dur);
-        o.connect(g); g.connect(masterGain);
-        o.start(t + start); o.stop(t + start + dur + 0.05);
-        activeNodes.push(o);
-      });
-    }
-
-    function complete() {
-      if (!isOn()) return;
-      ensureCtx();
-      const t = ctx.currentTime;
-      // Ascending arpeggio: C5-E5-G5-C6
-      const notes = [523, 659, 784, 1047];
-      notes.forEach((f, i) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = 'triangle';
-        o.frequency.value = f;
-        const start = t + i * 0.08;
-        g.gain.setValueAtTime(0, start);
-        g.gain.linearRampToValueAtTime(0.15, start + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.001, start + 0.35);
-        o.connect(g); g.connect(masterGain);
-        o.start(start); o.stop(start + 0.4);
-        activeNodes.push(o);
-      });
-    }
-
-    function uiBlip() {
-      if (!isOn()) return;
-      ensureCtx();
-      const t = ctx.currentTime;
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'square';
-      o.frequency.value = 880;
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.04, t + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
-      o.connect(g); g.connect(masterGain);
-      o.start(t); o.stop(t + 0.08);
-      activeNodes.push(o);
-    }
-
-    // ---- TTS ----
-    let jaVoice = null;
-    function pickJapaneseVoice() {
-      if (!('speechSynthesis' in window)) return null;
-      const voices = window.speechSynthesis.getVoices();
-      // Prefer ja-JP voices; otherwise any voice with 'Japanese' or fall back to default
-      jaVoice = voices.find(v => v.lang === 'ja-JP')
-             || voices.find(v => v.lang && v.lang.startsWith('ja'))
-             || null;
-      return jaVoice;
-    }
-    if ('speechSynthesis' in window) {
-      pickJapaneseVoice();
-      window.speechSynthesis.onvoiceschanged = pickJapaneseVoice;
-    }
-
-    function speak(text, opts = {}) {
-      if (!isOn()) return;
-      if (!('speechSynthesis' in window)) return;
-      try { window.speechSynthesis.cancel(); } catch(e){}
-      const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'ja-JP';
-      u.rate = opts.rate || 1.05;
-      u.pitch = opts.pitch || 1.0;
-      u.volume = opts.volume || 0.9;
-      if (jaVoice) u.voice = jaVoice;
-      window.speechSynthesis.speak(u);
-    }
-
-    return {
-      activate, isOn, setEnabled, stopAll,
-      powerOn, scanSweep, detectPing, complete, uiBlip, speak,
-    };
-  })();
-
-  // ===== Audio toggle button =====
-  const audioToggleBtn = document.getElementById('audioToggle');
-  const audioIconOn  = document.getElementById('audioIconOn');
-  const audioIconOff = document.getElementById('audioIconOff');
-  const audioLabel   = document.getElementById('audioLabel');
-  let audioMuted = false;
-
-  function setAudioUI(muted) {
-    audioMuted = muted;
-    Audio.setEnabled(!muted);
-    audioIconOn.style.display  = muted ? 'none' : '';
-    audioIconOff.style.display = muted ? '' : 'none';
-    audioLabel.textContent = muted ? 'MUTED' : 'AUDIO';
-    audioToggleBtn.classList.toggle('muted', muted);
-  }
-
-  audioToggleBtn.addEventListener('click', () => {
-    Audio.activate(); // first click also unlocks audio context
-    setAudioUI(!audioMuted);
-    if (!audioMuted) Audio.uiBlip();
-  });
-
-  // Activate audio context on any user interaction (browsers require gesture)
-  function unlockAudio() {
-    Audio.activate();
-    document.removeEventListener('click', unlockAudio);
-    document.removeEventListener('keydown', unlockAudio);
-    document.removeEventListener('touchstart', unlockAudio);
-  }
-  document.addEventListener('click', unlockAudio);
-  document.addEventListener('keydown', unlockAudio);
-  document.addEventListener('touchstart', unlockAudio);
-
   // ===== Career Timeline Builder =====
   (function buildTimeline() {
     const slots = [
@@ -2164,7 +1916,6 @@
   })();
 
   // ===== Weather Scan Sequence =====
-  const skyZone       = document.getElementById('skyZone');
   const holdRing      = document.getElementById('holdRing');
   const hrFill        = document.getElementById('hrFill');
   const hrLabel       = document.getElementById('hrLabel');
@@ -2196,7 +1947,6 @@
     holdRing.style.opacity = '1';
     setHoldRingPos(x, y);
     animateHold(x, y);
-    Audio.powerOn();
   }
 
   function animateHold(x, y) {
@@ -2221,13 +1971,57 @@
     hrFill.style.strokeDashoffset = CIRC;
   }
 
-  // pointer events on sky zone
-  skyZone.addEventListener('mousedown',  e => startHold(e.clientX, e.clientY));
-  skyZone.addEventListener('touchstart', e => { const t = e.touches[0]; startHold(t.clientX, t.clientY); }, {passive:true});
-  skyZone.addEventListener('mousemove',  e => { if (holdStart) setHoldRingPos(e.clientX, e.clientY); });
-  skyZone.addEventListener('mouseup',    cancelHold);
-  skyZone.addEventListener('mouseleave', cancelHold);
-  skyZone.addEventListener('touchend',   cancelHold);
+  // ===== Stealth minimize button =====
+  const stealthMin = document.getElementById('stealthMin');
+  if (stealthMin) {
+    stealthMin.addEventListener('click', () => {
+      if (window.electronAPI && window.electronAPI.minimize) {
+        window.electronAPI.minimize();
+        return;
+      }
+      console.warn('Minimize is only available in Electron.');
+    });
+  }
+
+  // ===== Spacebar long-press to scan =====
+  let spaceDown = false;  // prevent key repeat from re-triggering
+
+  function getCenterPos() {
+    return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  }
+
+  document.addEventListener('keydown', (e) => {
+    // Space key (handle both modern and legacy key codes)
+    if (e.code === 'Space' || e.key === ' ' || e.keyCode === 32) {
+      e.preventDefault();  // prevent page scroll
+      if (spaceDown) return;  // ignore auto-repeat
+      spaceDown = true;
+
+      // 結果パネルが開いているときはスペースで閉じる（再スキャンはしない）
+      if (weatherResult.classList.contains('open')) {
+        closeResults();
+        return;
+      }
+
+      // Place hold ring at the center of the screen
+      const pos = getCenterPos();
+      startHold(pos.x, pos.y);
+    }
+  });
+
+  document.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' || e.key === ' ' || e.keyCode === 32) {
+      e.preventDefault();
+      spaceDown = false;
+      cancelHold();
+    }
+  });
+
+  // If the window loses focus while space is held, reset the state
+  window.addEventListener('blur', () => {
+    spaceDown = false;
+    cancelHold();
+  });
 
   function triggerScan() {
     if (scanning) return;
@@ -2269,9 +2063,6 @@
     const SCAN_MS = 4200;  // total left → right time
     const startTime = Date.now();
 
-    // 🔊 start continuous sweep tone for the duration of the scan
-    Audio.scanSweep(SCAN_MS / 1000);
-
     function step() {
       const t = Math.min((Date.now() - startTime) / SCAN_MS, 1);
       const w = window.innerWidth;
@@ -2303,7 +2094,6 @@
         if (box) box.classList.add('detected');
         radarStatus.childNodes[0].textContent = d.status[0] + '\n';
         radarSub.textContent = d.status[1];
-        Audio.detectPing();   // 🔊 ping on each detection
         detectIdx++;
       }
 
@@ -2320,7 +2110,6 @@
         scanReadout.classList.remove('show');
         radarStatus.childNodes[0].textContent = 'SCAN COMPLETE\n';
         radarSub.textContent = '// スキャン完了 //';
-        Audio.complete();     // 🔊 fanfare on completion
         setTimeout(showResults, 600);
       }
     }
@@ -2330,28 +2119,10 @@
   function showResults() {
     radarOverlay.classList.remove('active');
     weatherResult.classList.add('open');
-    Audio.uiBlip();           // 🔊 panel slide-in blip
 
     // 右下「関連情報」パネルを表示
     const panelRecs = document.getElementById('panelRecs');
     if (panelRecs) panelRecs.classList.add('revealed');
-
-    // 🔊 録音済み音声ファイルを再生（読み込めない場合はTTSにフォールバック）
-    setTimeout(() => {
-      if (audioMuted) return;
-      const snd = document.getElementById('sndScanComplete');
-      const announcement = '解析が完了しました。対象は富士通デザインセンター長、宇田哲也氏。エンジニア出身でありながら49歳でデザイン組織のトップに就任し、約200名のメンバーを率いてデザイン経営とDXを推進しています。';
-      if (snd && snd.src) {
-        snd.currentTime = 0;
-        snd.volume = 0.95;
-        snd.play().catch(err => {
-          console.warn('Audio file failed, falling back to TTS:', err);
-          Audio.speak(announcement);
-        });
-      } else {
-        Audio.speak(announcement);
-      }
-    }, 800);
 
     // stagger action cards in
     ['ac1','ac2','ac3','ac4'].forEach((id, i) => {
@@ -2362,14 +2133,12 @@
     });
   }
 
-  wrpClose.addEventListener('click', () => {
+  function closeResults() {
+    // 結果が開いていないときは何もしない
+    if (!weatherResult.classList.contains('open')) return;
     weatherResult.classList.remove('open');
-    Audio.uiBlip();
-    Audio.stopAll();   // stop any ongoing TTS/effects
 
-    // 関連情報パネルも非表示に戻す
-    const panelRecs = document.getElementById('panelRecs');
-    if (panelRecs) panelRecs.classList.remove('revealed');
+    // 右下「関連情報」パネルは閉じずに残しておく（次のスキャンまで保持）
 
     setTimeout(() => {
       scanning = false;
@@ -2385,7 +2154,9 @@
       });
       hrFill.style.strokeDashoffset = CIRC;
     }, 700);
-  });
+  }
+
+  wrpClose.addEventListener('click', closeResults);
 
   // ===== Crosshair follows mouse =====
   const crosshair = document.getElementById('crosshair');
