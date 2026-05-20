@@ -1712,10 +1712,10 @@
 <!-- ===== WEATHER SCAN DEMO ===== -->
 
 <!-- sky zone hint -->
-<div class="scan-hint">▸ HOLD [ SPACE ] KEY TO INITIATE SCAN ◂</div>
+<div class="scan-hint">▸ HOLD [ S ] KEY TO INITIATE SCAN ◂</div>
 
 <!-- invisible hold zone (upper half) -->
-<!-- sky-zone は撤去（スペースキー入力に変更）-->
+<!-- sky-zone は撤去（Sキー入力に変更）-->
 
 <!-- hold-to-scan progress ring (follows cursor) -->
 <div class="hold-ring" id="holdRing">
@@ -1983,21 +1983,26 @@
     });
   }
 
-  // ===== Spacebar long-press to scan =====
-  let spaceDown = false;  // prevent key repeat from re-triggering
+  // ===== S key long-press to scan =====
+  let sKeyDown = false;  // prevent key repeat from re-triggering
 
   function getCenterPos() {
     return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   }
 
-  document.addEventListener('keydown', (e) => {
-    // Space key (handle both modern and legacy key codes)
-    if (e.code === 'Space' || e.key === ' ' || e.keyCode === 32) {
-      e.preventDefault();  // prevent page scroll
-      if (spaceDown) return;  // ignore auto-repeat
-      spaceDown = true;
+  // S キー判定（大文字/小文字どちらも、IMEオン中は除外）
+  function isSKey(e) {
+    if (e.isComposing || e.keyCode === 229) return false;  // IME変換中は無視
+    return e.code === 'KeyS' || e.key === 's' || e.key === 'S';
+  }
 
-      // 結果パネルが開いているときはスペースで閉じる（再スキャンはしない）
+  document.addEventListener('keydown', (e) => {
+    if (isSKey(e)) {
+      e.preventDefault();
+      if (sKeyDown) return;  // ignore auto-repeat
+      sKeyDown = true;
+
+      // 結果パネルが開いているときは S で閉じる（再スキャンはしない）
       if (weatherResult.classList.contains('open')) {
         closeResults();
         return;
@@ -2010,16 +2015,16 @@
   });
 
   document.addEventListener('keyup', (e) => {
-    if (e.code === 'Space' || e.key === ' ' || e.keyCode === 32) {
+    if (isSKey(e)) {
       e.preventDefault();
-      spaceDown = false;
+      sKeyDown = false;
       cancelHold();
     }
   });
 
-  // If the window loses focus while space is held, reset the state
+  // If the window loses focus while S is held, reset the state
   window.addEventListener('blur', () => {
-    spaceDown = false;
+    sKeyDown = false;
     cancelHold();
   });
 
