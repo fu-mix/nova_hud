@@ -11,6 +11,7 @@ function createWindow() {
     frame: false,
     alwaysOnTop: true,
     hasShadow: false,
+    skipTaskbar: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -19,6 +20,13 @@ function createWindow() {
   })
 
   mainWin.loadFile('nova_hud.html')
+
+  // フルスクリーンアプリの上にも表示するため、最高レベルに昇格
+  // 'screen-saver' は Windows の HWND_TOPMOST より上のレベル
+  mainWin.setAlwaysOnTop(true, 'screen-saver')
+
+  // すべてのワークスペース／フルスクリーンSpaceで表示
+  mainWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
   // ESCキーで終了 — app.quit() を使うとレンダラのクリーンアップが安全に走る
   mainWin.webContents.on('before-input-event', (event, input) => {
